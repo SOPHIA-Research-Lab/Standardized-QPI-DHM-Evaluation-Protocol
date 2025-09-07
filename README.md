@@ -1,11 +1,7 @@
 # Standardized-QPI-DHM-Evaluation-Protocol
-A Python-based GUI for evaluating the efficiency and validity of phase-reconstruction algorithms in Digital Holographic Microscopy (DHM).
-This repository provides a standardized protocol for Quantitative Phase Imaging (QPI) evaluation, structured into four main modules (núcleos) that cover background stability, global phase distortions, ground-truth comparisons, and computational complexity.
-
-# Standardized-QPI-DHM-Evaluation-Protocol  
 
 A Python-based GUI for evaluating the efficiency and validity of phase-reconstruction algorithms in **Digital Holographic Microscopy (DHM)**.  
-This repository provides a **standardized protocol** for Quantitative Phase Imaging (QPI) evaluation, structured into four main modules (*núcleos*) that cover background stability, global phase distortions, ground-truth comparisons, and computational complexity.  
+This repository provides a **standardized protocol** for Quantitative Phase Imaging (QPI) evaluation, structured into four main modules (*core*) that cover background stability, global phase distortions, ground-truth comparisons, and computational complexity.  
 
 ---
 
