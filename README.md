@@ -44,8 +44,8 @@ Focuses on phase flatness in object-free regions of reconstructed phase images. 
 For samples without large empty regions. Evaluates distortions across the entire phase map.  
 
 **Metrics:**  
-- Maximum–Minimum and Maximum–Minimum–Average–α-STD ([Opt. Commun. 2018](https://doi.org/10.1016/j.optcom.2018.08.061))  
-- Global phase gradient ([Biomed. Opt. Express 2019](https://doi.org/10.1364/BOE.10.000283))  
+- Maximum–Minimum and Maximum–Minimum–Average–α-STD
+- Global phase gradient 
 - TSM (Total Sharpness Metric)  
 - Phase curvature coefficients (low-order polynomial fitting)  
 - Laplacian energy (Curvature Energy)  
