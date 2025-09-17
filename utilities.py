@@ -1,13 +1,15 @@
 
+
 # import libraries
 from PIL import Image, ImageOps
-from matplotlib import pyplot as plt
-from skimage.segmentation import watershed
-from skimage import measure, morphology
-import cv2
-import numpy as np
 from scipy.ndimage import distance_transform_edt
-from tkinter import ttk
+from skimage import measure
+from skimage.segmentation import watershed
+import numpy as np
+import cv2
+import matplotlib.pyplot as plt
+from skimage import morphology
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from tkinter import simpledialog
 
 
@@ -28,6 +30,25 @@ def imageShow(image, title):
     """
     plt.imshow(image, cmap='gray')
     plt.title(title)
+    plt.show()
+
+
+# Function to show two images side by side
+def show_side_by_side(img1, img2, title1="Image 1", title2="Image 2", cmap="gray"):
+    """
+    Showing images using plt
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+
+    axes[0].imshow(img1, cmap=cmap)
+    axes[0].set_title(title1)
+    axes[0].axis("off")
+
+    axes[1].imshow(img2, cmap=cmap)
+    axes[1].set_title(title2)
+    axes[1].axis("off")
+
+    plt.tight_layout()
     plt.show()
 
 
@@ -81,136 +102,114 @@ def separate_touching_samples(binary_mask):
         return binary_mask
 
 
-def create_background_mask(image: np.ndarray, method: str = 'otsu', manual_threshold: float = 0.5):
+def create_background_mask(
+    image: np.ndarray,
+    method: str = 'otsu',
+    manual_threshold: float = 0.5,
+    min_area: int = 100,
+    hole_area: int = 50
+):
     """
-    Create a background mask that identifies regions WITHOUT sample (background only)
-
-    Parameters:
-    -----------
-    image : np.ndarray
-        Input phase image (original values we want to preserve)
-    method : str
-        Thresholding method: 'otsu', 'manual'
-    manual_threshold : float
-        Manual threshold value in range [0.0, 1.0]
-
-    Returns:
-    --------
-    background_mask : np.ndarray (boolean)
-        True where there is background (no sample), False where there is sample
-    background_values : np.ndarray (1D)
-        Original image values only from background regions
-    threshold_value : float
-        Threshold value used for binarization
+    Build a background mask (True where background) from a phase image.
     """
-    import cv2
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from tkinter import simpledialog
-    from scipy.ndimage import distance_transform_edt
-    from skimage import measure, morphology
-    from skimage.segmentation import watershed
+    img_u8 = ((image - np.min(image)) / (np.max(image) - np.min(image) + 1e-12) * 255).astype(np.uint8)
 
-    # Convert image to uint8 for OpenCV processing
-    image_normalized = ((image - np.min(image)) / (np.max(image) - np.min(image)) * 255).astype(np.uint8)
-
-    # Step 1: Create initial binary mask
     if method == 'otsu':
-        threshold_value, binary = cv2.threshold(image_normalized, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        binary = cv2.bitwise_not(binary)
+        thr_u8, binary = cv2.threshold(img_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        threshold_value = float(thr_u8) / 255.0
     elif method == 'manual':
-        manual_thresh_uint8 = int(manual_threshold * 255)
-        _, binary = cv2.threshold(image_normalized, manual_thresh_uint8, 255, cv2.THRESH_BINARY)
-        threshold_value = manual_threshold
-        binary = cv2.bitwise_not(binary)
+        thr_u8 = int(np.clip(manual_threshold, 0, 1) * 255)
+        _, binary = cv2.threshold(img_u8, thr_u8, 255, cv2.THRESH_BINARY)
+        threshold_value = float(thr_u8) / 255.0
     else:
         raise ValueError(f"Unknown thresholding method: {method}")
 
-    # Convert to boolean mask
-    binary_mask = binary > 0
+    # Preview: original + raw binary (white regions = pixels above threshold)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5), constrained_layout=False)
 
-    # Step 2: Separate touching samples if needed
-    if np.sum(binary_mask) > 0:
-        binary_mask = separate_touching_samples(binary_mask)
+    im = ax1.imshow(image, cmap='jet')
+    ax1.set_title('Original Phase Image')
+    ax1.axis('off')
+    ax1.set_aspect('equal')
+    divider = make_axes_locatable(ax1)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    fig.colorbar(im, cax=cax)
 
-    # Step 3: Show binary mask and ask user about sample polarity
-    plt.figure(figsize=(8, 8))
-    plt.subplot(1, 2, 1)
-    plt.imshow(image, cmap='jet')
-    plt.title('Original Phase Image')
-    plt.colorbar()
-    plt.axis('off')
+    ax2.imshow(binary > 0, cmap='gray')
+    ax2.set_title('Binary preview (White = pixels > threshold)')
+    ax2.axis('off')
+    ax2.set_aspect('equal')
 
-    plt.subplot(1, 2, 2)
-    plt.imshow(binary_mask, cmap='gray')
-    plt.title('Binary Mask - White regions detected')
-    plt.axis('off')
-    plt.tight_layout()
-    plt.show(block=True)
-
-    # Ask user if sample appears white or black
-    answer = simpledialog.askstring(
-        "Sample Polarity",
-        "In the binary mask, does the SAMPLE appear as:\n\nWhite regions (w) or Black regions (b)?\n\nType: w or b"
-    )
-
-    sample_is_white = True
-    if answer:
-        answer = answer.strip().lower()
-        sample_is_white = (answer == 'w')
-
-    print(f"User selected: Sample appears as {'WHITE' if sample_is_white else 'BLACK'} in binary mask")
-
-    # Step 4: Clean the mask
-    min_area = 100  # Minimum area for objects
-
-    if sample_is_white:
-        print("Cleaning WHITE sample regions...")
-        cleaned_sample_mask = morphology.remove_small_objects(binary_mask, min_size=min_area)
-    else:
-        print("Cleaning BLACK sample regions...")
-        cleaned_sample_mask = ~morphology.remove_small_objects(~binary_mask, min_size=min_area)
-
-    # Remove small holes
-    final_sample_mask = morphology.remove_small_holes(cleaned_sample_mask, area_threshold=50)
-
-    # Step 5: Create BACKGROUND mask (inverse of sample mask)
-    background_mask = ~final_sample_mask
-
-    # Step 6: Extract background values from ORIGINAL image
-    background_values = image[background_mask]
-
-    # Step 7: Show final result
-    plt.figure(figsize=(12, 4))
-
-    plt.subplot(1, 3, 1)
-    plt.imshow(image, cmap='jet')
-    plt.title('Original Phase Image')
-    plt.colorbar()
-    plt.axis('off')
-
-    plt.subplot(1, 3, 2)
-    plt.imshow(final_sample_mask, cmap='gray')
-    plt.title('Sample Mask (White = Sample)')
-    plt.axis('off')
-
-    plt.subplot(1, 3, 3)
-    plt.imshow(background_mask, cmap='gray')
-    plt.title('Background Mask (White = Background)')
-    plt.axis('off')
-
-    plt.tight_layout()
+    plt.subplots_adjust(wspace=0.15)
     plt.show()
 
-    # Print statistics
-    total_pixels = image.size
-    background_pixels = np.sum(background_mask)
-    sample_pixels = np.sum(final_sample_mask)
+    # Ask polarity relative to the preview just shown
+    answer = simpledialog.askstring(
+        "Sample Polarity",
+        "In the binary preview, does the SAMPLE appear as:\n\nWhite regions (w) or Black regions (b)?\n\nType: w or b"
+    )
+    sample_is_white = (answer or 'w').strip().lower() == 'w'
 
-    print(f"\nMask Statistics:")
+    # Build sample mask explicitly from the chosen polarity
+    preview_mask = (binary > 0)
+    if sample_is_white:
+        sample_mask = preview_mask.copy()
+    else:
+        sample_mask = ~preview_mask
+
+    # Optional separation if available
+    try:
+        if np.any(sample_mask):
+            sample_mask = separate_touching_samples(sample_mask)
+    except NameError:
+        pass
+
+    # Clean mask
+    if sample_is_white:
+        cleaned = morphology.remove_small_objects(sample_mask, min_size=min_area)
+    else:
+        cleaned = ~morphology.remove_small_objects(~sample_mask, min_size=min_area)
+
+    final_sample_mask = morphology.remove_small_holes(cleaned, area_threshold=hole_area)
+
+    # Background is the complement
+    background_mask = ~final_sample_mask
+    background_values = image[background_mask]
+
+    # Final visualization
+    fig, (axA, axB, axC) = plt.subplots(1, 3, figsize=(12, 4), constrained_layout=False)
+
+    imA = axA.imshow(image, cmap='jet')
+    axA.set_title('Original Phase Image')
+    axA.axis('off')
+    axA.set_aspect('equal')
+    divA = make_axes_locatable(axA)
+    caxA = divA.append_axes("right", size="5%", pad=0.05)
+    fig.colorbar(imA, cax=caxA)
+
+    axB.imshow(final_sample_mask, cmap='gray')
+    axB.set_title('Sample Mask (White = Sample)')
+    axB.axis('off')
+    axB.set_aspect('equal')
+
+    axC.imshow(background_mask, cmap='gray')
+    axC.set_title('Background Mask (White = Background)')
+    axC.axis('off')
+    axC.set_aspect('equal')
+
+    plt.subplots_adjust(wspace=0.2)
+    plt.show()
+
+    # Stats
+    total_pixels = image.size
+    background_pixels = int(np.sum(background_mask))
+    sample_pixels = int(np.sum(final_sample_mask))
+
+    print("\nMask Statistics:")
     print(f"Total pixels: {total_pixels}")
     print(f"Background pixels: {background_pixels} ({100 * background_pixels / total_pixels:.1f}%)")
     print(f"Sample pixels: {sample_pixels} ({100 * sample_pixels / total_pixels:.1f}%)")
     print(f"Background values extracted: {len(background_values)}")
 
     return background_mask, background_values, threshold_value
+

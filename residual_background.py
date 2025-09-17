@@ -1,25 +1,147 @@
 
+
 '''
-Núcleo 1 - Residual background phase variance: Métricas convencionales. Se mide phase flatness in
-background (object-free) regions of the reconstructed phase image. En estas, hay que hacer un
-segmentador, para saber cuáles son las zonas de fondo en el objeto.
-Métricas en este grupo:
-- Standard deviation (STD) or Mean Absolute Deviation (MAD) (o las dos).
-- RMS.
+Núcleo 1 - Residual background phase variance
 - Peak-to-Valley (P–V) Value in Background.
 - Background phase tilt/Curvature residuals (esta involucra medir los coeficientes de legenre/zernike para el mapa de fase resultante, y con ellos, saber cuáles son los residuales)
-- Full Width at Half Maximum (FWHM) of the phase histogram (esta es muy buena cuando hay bastante fondo, yo diría, la mejor. Me cuentas si no sabes cómo medirla.)
-- Spatial frequency content of background (la misma que implementaste para el paper del VortexLegendre, pero para el fondo solamente).
-- Entropy of background phase map (creo que ya la tienes, pero para el bakground).
 '''
 
 # Libraries
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from typing import Optional, List, Tuple
+from matplotlib.widgets import Button
 from numpy.polynomial import legendre
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from skimage.restoration import unwrap_phase
 from sklearn.feature_extraction.image import extract_patches_2d, reconstruct_from_patches_2d
+
+
+class ManualRectangleSelector:
+    def __init__(self, img, num_zones):
+        self.img = img
+        self.num_zones = num_zones
+        self.rectangles = []
+        self.current_rect = None
+        self.start_point = None
+        self.fig, self.ax = plt.subplots(figsize=(10, 8))
+        self.setup_plot()
+
+    def setup_plot(self):
+        self.ax.imshow(self.img, cmap='viridis')
+        self.ax.set_title(f'Selecciona {self.num_zones} rectángulos. Actual: 0/{self.num_zones}')
+
+        # Mouse conections
+        self.fig.canvas.mpl_connect('button_press_event', self.on_press)
+        self.fig.canvas.mpl_connect('button_release_event', self.on_release)
+        self.fig.canvas.mpl_connect('motion_notify_event', self.on_motion)
+
+        # Button to end
+        ax_button = plt.axes([0.81, 0.01, 0.1, 0.05])
+        self.button = Button(ax_button, 'Finalizar')
+        self.button.on_clicked(self.finish_selection)
+
+    def on_press(self, event):
+        if event.inaxes != self.ax or len(self.rectangles) >= self.num_zones:
+            return
+
+        self.start_point = (event.xdata, event.ydata)
+
+    def on_motion(self, event):
+        if self.start_point is None or event.inaxes != self.ax:
+            return
+
+        if self.current_rect:
+            self.current_rect.remove()
+
+        x0, y0 = self.start_point
+        width = event.xdata - x0
+        height = event.ydata - y0
+
+        self.current_rect = patches.Rectangle(
+            (x0, y0), width, height,
+            linewidth=2, edgecolor='red', facecolor='none', alpha=0.7
+        )
+        self.ax.add_patch(self.current_rect)
+        self.fig.canvas.draw()
+
+    def on_release(self, event):
+        if self.start_point is None or event.inaxes != self.ax:
+            return
+
+        if len(self.rectangles) >= self.num_zones:
+            return
+
+        x0, y0 = self.start_point
+        x1, y1 = event.xdata, event.ydata
+
+        # guarantee well-coordinates
+        xmin, xmax = min(x0, x1), max(x0, x1)
+        ymin, ymax = min(y0, y1), max(y0, y1)
+
+        xmin = int(max(0, min(xmin, self.img.shape[1] - 1)))
+        xmax = int(max(0, min(xmax, self.img.shape[1] - 1)))
+        ymin = int(max(0, min(ymin, self.img.shape[0] - 1)))
+        ymax = int(max(0, min(ymax, self.img.shape[0] - 1)))
+
+        if xmax > xmin and ymax > ymin:
+            rect_coords = (xmin, xmax, ymin, ymax)
+            self.rectangles.append(rect_coords)
+
+            # Draw rectangles
+            if self.current_rect:
+                self.current_rect.remove()
+
+            final_rect = patches.Rectangle(
+                (xmin, ymin), xmax - xmin, ymax - ymin,
+                linewidth=2, edgecolor='blue', facecolor='none', alpha=0.8
+            )
+            self.ax.add_patch(final_rect)
+
+            # add zones
+            self.ax.text(xmin + 5, ymin + 15, f'{len(self.rectangles)}',
+                         color='blue', fontsize=12, fontweight='bold')
+
+        self.current_rect = None
+        self.start_point = None
+
+        # Actualizar título
+        self.ax.set_title(f'Selecciona {self.num_zones} rectángulos. Actual: {len(self.rectangles)}/{self.num_zones}')
+        self.fig.canvas.draw()
+
+    def finish_selection(self, event):
+        plt.close(self.fig)
+
+    def get_rectangles(self):
+        return self.rectangles
+
+
+def select_manual_zones(img, num_zones):
+    """
+    function to select rectangular areas manually.
+    """
+    selector = ManualRectangleSelector(img, num_zones)
+    plt.show()
+
+    zones = selector.get_rectangles()
+
+    if len(zones) == 0:
+        print("No zone has been selected")
+        return None
+
+    print(f"Number of zones selected are {len(zones)}")
+    return zones
+
+
+def unwrap_with_scikit(wrapped_phase):
+    """
+    Implement scikit-image to unwrap phase images
+    """
+    unwrapped = unwrap_phase(wrapped_phase)
+
+    return unwrapped
 
 
 def legendre_background_correction(image: np.ndarray, order=3):
@@ -53,7 +175,7 @@ def legendre_background_correction(image: np.ndarray, order=3):
     return image - background, background
 
 
-def pca_background_separation(image: np.ndarray, n_components=5, patch_size=(8, 8), keep_components=2):
+def pca_background_separation(image: np.ndarray, n_components=1, patch_size=(8, 8), keep_components=2):
     """
     Estimate the background via PCA on overlapping patches and reconstruct the background image.
     """
@@ -211,123 +333,311 @@ def square_legendre_fitting_background(order, X, Y):
     return np.stack(polynomials, axis=-1)
 
 
-def spatial_frequency(self, img):
-    gray = np.array(img.convert("L")).astype(np.float64)
-    M, N = gray.shape
-    RF = np.sqrt(np.sum((gray[:, 1:] - gray[:, :-1]) ** 2) / (M * N))
-    CF = np.sqrt(np.sum((gray[1:, :] - gray[:-1, :]) ** 2) / (M * N))
-    SF = np.sqrt(RF ** 2 + CF ** 2)
+def std_background(img,  mask: np.ndarray = None, manual=False, num_zones=3) -> float:
+    if manual:
+        zones = select_manual_zones(img, num_zones)
+        if len(zones) == 0:
+            print("No zones selected.")
+            return np.nan, []
 
-    return SF
+        zone_stats = []
+        std_values = []
 
+        print("\n=== STD per Zone ===")
+        for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
+            zone_img = img[ymin:ymax, xmin:xmax]
+            zone_std = float(np.std(zone_img))
+            std_values.append(zone_std)
+            zone_stats.append({
+                'zone': i,
+                'std': zone_std,
+                'coords': (xmin, xmax, ymin, ymax),
+            })
+            print(f"Zone {i}: STD = {zone_std:.4f}")
 
-def entropy_background(self, img):
-    gray_img = img.convert("L")
-    hist = gray_img.histogram()
-    hist = np.array(hist) / np.sum(hist)
-    hist = hist[hist > 0]
-    entropy = -np.sum(hist * np.log2(hist))
-    return entropy
-
-
-def std_background(img,  mask: np.ndarray = None):
-    if mask is not None:
-        values = img[mask]
+        std_mean = float(np.mean(std_values))
+        print(f"Mean STD: {std_mean:.4f}")
+        return std_mean, zone_stats
     else:
-        values = img.flatten()
+        if mask is not None:
+            values = img[mask]
+        else:
+            values = img.flatten()
 
-    std_val = np.std(values)
-    return std_val
+        std_val = np.std(values)
+        print(f" STD whole background: {std_val:.4f}")
+
+        return std_val
 
 
-def mean_absolute_deviation_background(image: np.ndarray, mask: np.ndarray = None) -> float:
+def mean_absolute_deviation_background(img,  mask: np.ndarray = None, manual=False, num_zones=3) -> float:
     """
     Compute the Mean Absolute Deviation (MAD) of an image or array.
     """
-    if mask is not None:
-        values = image[mask]
-    else:
-        values = image.flatten()
+    if manual:
+        zones = select_manual_zones(img, num_zones)
+        if len(zones) == 0:
+            print("No zones selected.")
+            return np.nan, []
 
-    mean_val = np.mean(values)
-    mad = np.mean(np.abs(values - mean_val))
+        zone_stats = []
+        mad_values = []
+
+        print("\n=== MAD per Zone ===")
+        for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
+            zone_img = img[ymin:ymax, xmin:xmax]
+            zone_mean = np.mean(zone_img)
+            zone_mad = np.mean(np.abs(zone_img - zone_mean))
+            mad_values.append(zone_mad)
+            zone_stats.append({
+                'zone': i,
+                'mad': zone_mad,
+                'coords': (xmin, xmax, ymin, ymax),
+            })
+            print(f"Zone {i}: MAD = {zone_mad:.4f}")
+
+        mad_mean = float(np.mean(mad_values))
+        print(f"Mean MAD: {mad_mean:.4f}")
+
+        return mad_values, zone_stats
+    else:
+        if mask is not None:
+            values = img[mask]
+        else:
+            values = img.flatten()
+
+        mean_val = np.mean(values)
+        mad = np.mean(np.abs(values - mean_val))
+        print(f" MAD whole background: {mad:.4f}")
+
     return mad
 
 
-def rms(image: np.ndarray, mask: np.ndarray = None, relative_to_mean: bool = True) -> float:
+def rms_background(img,  mask: np.ndarray = None, manual=False, num_zones=3) -> float:
     """
     Compute the Root Mean Square (RMS) of an image or array.
     """
-    if mask is not None:
-        values = image[mask]
-    else:
-        values = image.flatten()
+    if manual:
+        zones = select_manual_zones(img, num_zones)
+        if len(zones) == 0:
+            print("No zones selected.")
+            return np.nan, []
 
-    if relative_to_mean:
-        mean_val = np.mean(values)
-        rms_val = np.sqrt(np.mean((values - mean_val) ** 2))
+        zone_stats = []
+        rms_values = []
+
+        print("\n=== RMS per Zone ===")
+        for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
+            zone_img = img[ymin:ymax, xmin:xmax]
+            zone_rms = np.sqrt(np.mean((zone_img - np.mean(zone_img)) ** 2))
+            rms_values.append(zone_rms)
+            zone_stats.append({
+                'zone': i,
+                'rms': zone_rms,
+                'coords': (xmin, xmax, ymin, ymax),
+            })
+            print(f"Zone {i}: MAD = {zone_rms:.4f}")
+
+        rms_mean = float(np.mean(rms_values))
+        print(f"Mean MAD: {rms_mean:.4f}")
+
+        return rms_values, zone_stats
     else:
-        rms_val = np.sqrt(np.mean(values ** 2))
+        if mask is not None:
+            values = img[mask]
+        else:
+            values = img.flatten()
+
+    rms_val = np.sqrt(np.mean((values - np.mean(values)) ** 2))
+    print(f" MAD whole background: {rms_val:.4f}")
 
     return rms_val
 
 
-def calculate_background_fwhm(background):
-    """
-    Calculate FWHM of background phase noise using histogram method
-    """
-    # Create histogram of background values
-    hist, bin_edges = np.histogram(background.flatten(), bins=100)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-
-    # Find peak of histogram
-    max_idx = np.argmax(hist)
-    max_value = hist[max_idx]
-    half_max = max_value / 2
-
-    # Find left edge (where histogram crosses half maximum before peak)
-    left_idx = np.where(hist[:max_idx] <= half_max)[0]
-
-    # Find right edge (where histogram crosses half maximum after peak)
-    right_idx = np.where(hist[max_idx:] <= half_max)[0]
-
-    # Calculate FWHM if both edges are found
-    if len(left_idx) > 0 and len(right_idx) > 0:
-        left_edge = bin_centers[left_idx[-1]]
-        right_edge = bin_centers[max_idx + right_idx[0]]
-        fwhm = right_edge - left_edge
-    else:
-        fwhm = np.nan
-
-    return fwhm
-
-
-def calculate_phase_entropy_background(phase_background, n_bins=256, method='shannon'):
-    """
-    Calculate entropy of background phase map, using shannon
-    """
-    import numpy as np
-
-    # Flatten the image and remove any NaN or infinite values
-    phase_flat = phase_background.flatten()
-    phase_flat = phase_flat[np.isfinite(phase_flat)]
-
-    if len(phase_flat) == 0:
+def _fwhm_from_values(values: np.ndarray, bins: int = 100) -> float:
+    """Compute FWHM of a 1D sample via histogram half-maximum with linear interpolation."""
+    vals = np.asarray(values).ravel()
+    vals = vals[~np.isnan(vals)]
+    if vals.size < 5:
         return np.nan
 
-    # Create histogram with specified number of bins
-    hist, bin_edges = np.histogram(phase_flat, bins=n_bins, density=True)
+    hist, bin_edges = np.histogram(vals, bins=bins)
+    if not np.any(hist):
+        return np.nan
 
-    # Calculate bin width for probability normalization
-    bin_width = bin_edges[1] - bin_edges[0]
+    centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    peak_idx = int(np.argmax(hist))
+    peak = float(hist[peak_idx])
+    if peak <= 0:
+        return np.nan
+    half = 0.5 * peak
 
-    # Convert to probabilities (normalize histogram)
-    probabilities = hist * bin_width
+    # Left crossing (from peak to the left)
+    left_idx = None
+    for i in range(peak_idx, 0, -1):
+        if hist[i-1] <= half <= hist[i]:
+            x1, y1 = centers[i-1], hist[i-1]
+            x2, y2 = centers[i],   hist[i]
+            t = (half - y1) / (y2 - y1 + 1e-12)
+            x_half_left = x1 + t * (x2 - x1)
+            left_idx = x_half_left
+            break
 
-    # Remove zero probabilities to avoid log(0)
-    probabilities = probabilities[probabilities > 0]
+    # Right crossing (from peak to the right)
+    right_idx = None
+    for i in range(peak_idx, len(hist)-1):
+        if hist[i] >= half >= hist[i+1]:
+            x1, y1 = centers[i],   hist[i]
+            x2, y2 = centers[i+1], hist[i+1]
+            t = (half - y1) / (y2 - y1 + 1e-12)
+            x_half_right = x1 + t * (x2 - x1)
+            right_idx = x_half_right
+            break
 
-    # Calculate Shannon entropy in bits
-    entropy = -np.sum(probabilities * np.log2(probabilities))
+    if left_idx is None or right_idx is None:
+        return np.nan
+    return float(right_idx - left_idx)
 
-    return entropy
+
+def fwhm_background(img: np.ndarray, mask: np.ndarray = None, manual=False, num_zones=3)-> float:
+    """
+    FWHM of background phase noise (histogram method).
+    """
+    if manual:
+        zones = select_manual_zones(img, num_zones)
+        if len(zones) == 0:
+            print("No zones selected.")
+            return [], []
+
+        fwhm_values = []
+        zone_stats = []
+        print("\n=== FWHM per Zone (background) ===")
+        for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
+            zone = img[ymin:ymax, xmin:xmax]
+            fwhm = _fwhm_from_values(zone, bins=100)
+            fwhm_values.append(fwhm)
+            zone_stats.append({
+                'zone': i,
+                'fwhm': fwhm,
+                'coords': (xmin, xmax, ymin, ymax),
+            })
+            print(f"Zone {i}: FWHM = {fwhm:.4f}" if np.isfinite(fwhm) else f"Zone {i}: FWHM = nan")
+
+        return fwhm_values, zone_stats
+
+    # Non-manual: use provided background mask or the whole image
+    values = img[mask] if (mask is not None) else img.ravel()
+    fwhm_val = _fwhm_from_values(values, bins=100)
+    print(f"FWHM (background): {fwhm_val:.4f}" if np.isfinite(fwhm_val) else "FWHM (background): nan")
+
+    return fwhm_val
+
+
+def _shannon_entropy(values: np.ndarray, bins: int = 256, base: float = 2.0) -> float:
+    """Shannon entropy (bits if base=2) estimated from a histogram of values."""
+    vals = np.asarray(values).ravel()
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return float('nan')
+
+    hist, _ = np.histogram(vals, bins=bins)
+    total = hist.sum()
+    if total == 0:
+        return float('nan')
+
+    p = hist.astype(float) / total
+    p = p[p > 0.0]
+    if p.size == 0:
+        return 0.0
+
+    if base == 2.0:
+        return float(-np.sum(p * np.log2(p)))
+    else:
+        return float(-np.sum(p * (np.log(p) / np.log(base))))
+
+
+def entropy_background(img: np.ndarray, mask: np.ndarray = None, manual=False, num_zones: int = 3,
+                       bins: int = 256,
+                       base: float = 2.0):
+    """
+    Shannon entropy (histogram-based) of background phase values.
+    """
+    if manual:
+        zones = select_manual_zones(img, num_zones)
+        if len(zones) == 0:
+            print("No zones selected.")
+            return [], []
+
+        entropy_values: List[float] = []
+        zone_stats: List[dict] = []
+
+        print("\n=== Entropy per Zone (background) ===")
+        for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
+            zone = img[ymin:ymax, xmin:xmax]
+            H = _shannon_entropy(zone, bins=bins, base=base)
+            entropy_values.append(H)
+            zone_stats.append({
+                'zone': i,
+                'entropy': H,
+                'coords': (xmin, xmax, ymin, ymax),
+            })
+            if np.isfinite(H):
+                print(f"Zone {i}: Entropy = {H:.4f} bits")
+            else:
+                print(f"Zone {i}: Entropy = nan")
+
+        return entropy_values, zone_stats
+
+    values = img[mask] if (mask is not None) else img.ravel()
+    H = _shannon_entropy(values, bins=bins, base=base)
+    if np.isfinite(H):
+        print(f"Entropy (background): {H:.4f} bits")
+    else:
+        print("Entropy (background): nan")
+    return H
+
+
+def spatial_frequency(img: np.ndarray, mask: np.ndarray | None = None,
+                      normalize=True, return_components: bool = False):
+    """
+    Spatial Frequency (SF).
+    """
+    arr = np.asarray(img, dtype=np.float64)
+    if arr.ndim != 2:
+        raise ValueError("img must be 2d")
+
+    if normalize:
+        vmin = np.nanmin(arr)
+        vmax = np.nanmax(arr)
+        if vmax > vmin:
+            arr = (arr - vmin) / (vmax - vmin)
+
+    M, N = arr.shape
+    if M < 2 and N < 2:
+        return (np.nan, np.nan, np.nan) if return_components else np.nan
+
+    dx = arr[:, 1:] - arr[:, :-1]     # M x (N-1)
+    dy = arr[1:, :] - arr[:-1, :]     # (M-1) x N
+
+    if mask is not None:
+        m = np.asarray(mask, dtype=bool)
+        if m.shape != arr.shape:
+            raise ValueError("mask")
+
+        hmask = m[:, 1:] & m[:, :-1]
+        vmask = m[1:, :] & m[:-1, :]
+
+        nh = int(np.count_nonzero(hmask))
+        nv = int(np.count_nonzero(vmask))
+
+        RF = np.sqrt(np.sum((dx[hmask])**2) / nh) if nh > 0 else np.nan
+        CF = np.sqrt(np.sum((dy[vmask])**2) / nv) if nv > 0 else np.nan
+    else:
+        denom_h = M * max(N - 1, 0)
+        denom_v = max(M - 1, 0) * N
+        RF = np.sqrt(np.sum(dx**2) / denom_h) if denom_h > 0 else np.nan
+        CF = np.sqrt(np.sum(dy**2) / denom_v) if denom_v > 0 else np.nan
+
+    SF = np.sqrt(RF**2 + CF**2) if np.isfinite(RF) and np.isfinite(CF) else np.nan
+    print(f" SF whole background: {SF:.4f}")
+    return (SF, RF, CF) if return_components else SF
