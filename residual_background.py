@@ -10,7 +10,7 @@ Núcleo 1 - Residual background phase variance
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from typing import Optional, List, Tuple
+from typing import List
 from matplotlib.widgets import Button
 from numpy.polynomial import legendre
 from sklearn.decomposition import PCA

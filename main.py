@@ -17,7 +17,7 @@ name = r"C:\Users\racastaneq\PycharmProjects\SEP\samples\NredBlood_40x_632_4.65_
 #name = r"C:\Users\racastaneq\PycharmProjects\SEP\samples\Tglibocut_0x_632_4.75_SHCP_.bmp"
 #name = r"C:\Users\racastaneq\PycharmProjects\SEP\samples\Tglibocut_0x_632_4.75_VortexLegPis_.bmp"
 
-# Example metrics using Legendre to obtain background
+# Example metrics
 sample = ut.imageRead(name)
 sample = ut.grayscaleToPhase(sample)
 unwrapped = rb.unwrap_with_scikit(sample)
