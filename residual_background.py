@@ -12,11 +12,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from typing import List
 from matplotlib.widgets import Button
-from numpy.polynomial import legendre
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
-from skimage.restoration import unwrap_phase
-from sklearn.feature_extraction.image import extract_patches_2d, reconstruct_from_patches_2d
+import unwrapping as uw
+from numpy.fft import fft2, ifft2, fftshift, ifftshift
+from scipy.sparse.linalg import svds
 
 
 class ManualRectangleSelector:
@@ -107,8 +105,8 @@ class ManualRectangleSelector:
         self.current_rect = None
         self.start_point = None
 
-        # Actualizar título
-        self.ax.set_title(f'Selecciona {self.num_zones} rectángulos. Actual: {len(self.rectangles)}/{self.num_zones}')
+        # Select ROI
+        self.ax.set_title(f'Select {self.num_zones} Rectangles. Actual: {len(self.rectangles)}/{self.num_zones}')
         self.fig.canvas.draw()
 
     def finish_selection(self, event):
@@ -133,204 +131,6 @@ def select_manual_zones(img, num_zones):
 
     print(f"Number of zones selected are {len(zones)}")
     return zones
-
-
-def unwrap_with_scikit(wrapped_phase):
-    """
-    Implement scikit-image to unwrap phase images
-    """
-    unwrapped = unwrap_phase(wrapped_phase)
-
-    return unwrapped
-
-
-def legendre_background_correction(image: np.ndarray, order=3):
-    """
-    Fits 2D Legendre polynomials to model the background of the image.
-    """
-    image = np.array(image)
-    h, w = image.shape
-    x = np.linspace(-1, 1, w)
-    y = np.linspace(-1, 1, h)
-    X, Y = np.meshgrid(x, y)
-
-    # Create 2D Legendre polynomial basis
-    basis = []
-    for i in range(order + 1):
-        for j in range(order + 1):
-            if i + j <= order:
-                leg_i = legendre.legval(X, [0] * i + [1])
-                leg_j = legendre.legval(Y, [0] * j + [1])
-                basis.append((leg_i * leg_j).flatten())
-
-    basis = np.array(basis).T
-
-    # Fit coefficients
-    image_flat = image.flatten()
-    coeffs = np.linalg.lstsq(basis, image_flat, rcond=None)[0]
-
-    # Reconstruct background
-    background = (basis @ coeffs).reshape(image.shape)
-
-    return image - background, background
-
-
-def pca_background_separation(image: np.ndarray, n_components=1, patch_size=(8, 8), keep_components=2):
-    """
-    Estimate the background via PCA on overlapping patches and reconstruct the background image.
-    """
-    img = np.asarray(image, dtype=float)
-    h, w = img.shape
-    ph, pw = patch_size
-
-    # Extract overlapping patches
-    patches = extract_patches_2d(img, patch_size=patch_size)
-    N = patches.shape[0]
-    patches_flat = patches.reshape(N, -1)
-
-    # Standardize and apply PCA
-    scaler = StandardScaler()
-    patches_scaled = scaler.fit_transform(patches_flat)
-
-    pca = PCA(n_components=n_components, svd_solver="auto", whiten=False)
-    Z = pca.fit_transform(patches_scaled)
-
-    # Keep only the first components (background) and zero out the rest
-    keep = max(1, min(keep_components, n_components))
-    Z_bg = np.hstack([Z[:, :keep], np.zeros((N, n_components - keep))])
-
-    # Reconstruct background patches
-    patches_bg_scaled = pca.inverse_transform(Z_bg)
-    patches_bg = scaler.inverse_transform(patches_bg_scaled).reshape(N, ph, pw)
-
-    # Reconstruct background image from patches
-    background = reconstruct_from_patches_2d(patches_bg, (h, w))
-
-    # Corrected image
-    corrected = img - background
-    return corrected, background
-
-
-def legendre_background_extraction(field_compensate, limit, max_order=4, return_coefficients=False):
-    """
-    Extracts the background phase using Legendre polynomial fitting.
-    """
-
-    # Handle both complex fields and phase images
-    if np.iscomplexobj(field_compensate):
-        # If input is complex, extract phase
-        phase_input = np.angle(field_compensate)
-    else:
-        # If input is already phase/real image
-        phase_input = field_compensate
-
-    # Centered Fourier transform for complex fields, or direct processing for phase
-    if np.iscomplexobj(field_compensate):
-        fftField = np.fft.fftshift(np.fft.fft2(field_compensate))
-        A, B = fftField.shape
-        center_A = int(round(A / 2))
-        center_B = int(round(B / 2))
-
-        start_A = int(center_A - limit)
-        end_A = int(center_A + limit)
-        start_B = int(center_B - limit)
-        end_B = int(center_B + limit)
-
-        fftField = fftField[start_A:end_A, start_B:end_B]
-        square = np.fft.ifft2(np.fft.ifftshift(fftField))
-        phase_to_fit = unwrap_phase(np.angle(square))
-        original_shape = field_compensate.shape
-    else:
-        # For direct phase images, work with the full image
-        phase_to_fit = phase_input
-        original_shape = phase_input.shape
-
-    # Normalized spatial grid
-    gridSize_y, gridSize_x = phase_to_fit.shape
-    coords_x = np.linspace(-1, 1 - 2 / gridSize_x, gridSize_x)
-    coords_y = np.linspace(-1, 1 - 2 / gridSize_y, gridSize_y)
-    X, Y = np.meshgrid(coords_x, coords_y)
-
-    # Area element for integration
-    dA = (2 / gridSize_x) * (2 / gridSize_y)
-
-    # Use only low-order polynomials for background (smooth variations)
-    order = np.arange(1, max_order + 1)
-
-    # Get Legendre polynomial basis (only low orders for background)
-    polynomials = square_legendre_fitting_background(order, X, Y)
-    ny, nx, n_terms = polynomials.shape
-    Legendres = polynomials.reshape(ny * nx, n_terms)
-
-    # Orthonormalization
-    zProds = Legendres.T @ Legendres * dA
-    Legendres = Legendres / np.sqrt(np.diag(zProds))
-
-    # Normalization constants
-    Legendres_norm_const = np.sum(Legendres ** 2, axis=0) * dA
-
-    # Phase vector
-    phaseVector = phase_to_fit.reshape(-1, 1)
-
-    # Project onto Legendre basis
-    Legendre_Coefficients = np.sum(Legendres * phaseVector, axis=0) * dA
-
-    # Reconstruct background using fitted coefficients
-    coeffs_norm = Legendre_Coefficients / np.sqrt(Legendres_norm_const)
-    background_flat = np.sum(coeffs_norm[:, np.newaxis] * Legendres.T, axis=0)
-    background = background_flat.reshape(ny, nx)
-
-    # If input was complex field processed in frequency domain,
-    # we need to map back to original size
-    if np.iscomplexobj(field_compensate) and background.shape != original_shape:
-        # Simple resize/interpolation to match original shape
-        from scipy.ndimage import zoom
-        zoom_factors = (original_shape[0] / background.shape[0],
-                        original_shape[1] / background.shape[1])
-        background = zoom(background, zoom_factors, order=1)
-
-    if return_coefficients:
-        return background, Legendre_Coefficients
-    else:
-        return background
-
-
-def square_legendre_fitting_background(order, X, Y):
-    """
-    Generate low-order Legendre polynomials suitable for background fitting.
-    Focus on smooth, low-frequency variations.
-    """
-    polynomials = []
-    for i in order:
-        if i == 1:
-            # Constant term (piston)
-            polynomials.append(np.ones_like(X))
-        elif i == 2:
-            # Linear X (tilt)
-            polynomials.append(X)
-        elif i == 3:
-            # Linear Y (tilt)
-            polynomials.append(Y)
-        elif i == 4:
-            # Quadratic X (defocus/astigmatism)
-            polynomials.append((3 * X ** 2 - 1) / 2)
-        elif i == 5:
-            # Cross term XY
-            polynomials.append(X * Y)
-        elif i == 6:
-            # Quadratic Y (defocus/astigmatism)
-            polynomials.append((3 * Y ** 2 - 1) / 2)
-        # Add higher orders if needed, but typically background needs only low orders
-        elif i == 7:
-            polynomials.append((X * (5 * X ** 2 - 3)) / 2)
-        elif i == 8:
-            polynomials.append((Y * (3 * X ** 2 - 1)) / 2)
-        elif i == 9:
-            polynomials.append((X * (3 * Y ** 2 - 1)) / 2)
-        elif i == 10:
-            polynomials.append((Y * (5 * Y ** 2 - 3)) / 2)
-
-    return np.stack(polynomials, axis=-1)
 
 
 def std_background(img,  mask: np.ndarray = None, manual=False, num_zones=3) -> float:
@@ -641,3 +441,155 @@ def spatial_frequency(img: np.ndarray, mask: np.ndarray | None = None,
     SF = np.sqrt(RF**2 + CF**2) if np.isfinite(RF) and np.isfinite(CF) else np.nan
     print(f" SF whole background: {SF:.4f}")
     return (SF, RF, CF) if return_components else SF
+
+
+def legendre(complex_field, limit, NoPistonCompensation=True, UsePCA=False):
+    """
+    Legendre coefficient for background.
+    """
+
+    # Centered Fourier transform
+    fftField = fftshift(fft2(ifftshift(complex_field)))
+
+    A, B = fftField.shape
+    center_A = int(round(A / 2))
+    center_B = int(round(B / 2))
+
+    start_A = int(center_A - limit)
+    end_A = int(center_A + limit)
+    start_B = int(center_B - limit)
+    end_B = int(center_B + limit)
+
+    fftField = fftField[start_A:end_A, start_B:end_B]
+    square = ifftshift(ifft2(fftshift(fftField)))
+
+    # Extract dominant wavefront
+    if UsePCA:
+        u, s, vt = svds(square, k=1, which='LM')
+        dominant = u[:, :1] @ np.diag(s[:1]) @ vt[:1, :]
+        #dominant = unwrap_phase(np.angle(dominant))
+        dominant = uw.phase_unwrap(np.angle(dominant))
+    else:
+        #dominant = unwrap_phase(np.angle(square))
+        dominant = uw.phase_unwrap(np.angle(square))
+
+    # Normalized spatial grid
+    gridSize = dominant.shape[0]
+    coords = np.linspace(-1, 1 - 2 / gridSize, gridSize)
+    X, Y = np.meshgrid(coords, coords)
+
+    dA = (2 / gridSize) ** 2
+    order = np.arange(1, 11)
+
+    # Get orthonormal Legendre polynomial basis
+    polynomials = square_legendre_fitting(order, X, Y)
+    ny, nx, n_terms = polynomials.shape
+    Legendres = polynomials.reshape(ny * nx, n_terms)
+
+    zProds = Legendres.T @ Legendres * dA
+    Legendres = Legendres / np.sqrt(np.diag(zProds))
+
+    Legendres_norm_const = np.sum(Legendres ** 2, axis=0) * dA
+    phaseVector = dominant.reshape(-1, 1)
+
+    # Projection onto Legendre basis
+    Legendre_Coefficients = np.sum(Legendres * phaseVector, axis=0) * dA
+
+    if NoPistonCompensation:
+        # Piston compensation disabled
+        # Optionally skip the first coefficient in the reconstruction
+        pass
+    else:
+        # Search for the optimal piston value
+        values = np.arange(-np.pi, np.pi + np.pi / 6, np.pi / 6)
+        variances = []
+
+        for val in values:
+            temp_coeffs = Legendre_Coefficients.copy()
+            temp_coeffs[0] = val
+            coeffs_norm = temp_coeffs / np.sqrt(Legendres_norm_const)
+            wavefront = np.sum((coeffs_norm[:, np.newaxis]) * Legendres.T, axis=0)
+            temp_holo = np.exp(1j * np.angle(square)) / np.exp(1j * wavefront.reshape(ny, nx))
+            variances.append(np.var(np.angle(temp_holo)))
+
+        best = values[np.argmin(variances)]
+        Legendre_Coefficients[0] = best
+        #coeffs_norm = Legendre_Coefficients / np.sqrt(Legendres_norm_const)
+
+        gridSize = complex_field.shape[0]
+        coords = np.linspace(-1, 1 - 2 / gridSize, gridSize)
+        X_recon, Y_recon = np.meshgrid(coords, coords)
+        orders = np.arange(1, len(Legendre_Coefficients) + 1)
+
+        reconstruction_backgroud(Legendre_Coefficients, X_recon, Y_recon, orders)
+
+    return Legendre_Coefficients
+
+
+def square_legendre_fitting(order, X, Y):
+    polynomials = []
+    for i in order:
+        if i == 1:
+            polynomials.append(np.ones_like(X))
+        elif i == 2:
+            polynomials.append(X)
+        elif i == 3:
+            polynomials.append(Y)
+        elif i == 4:
+            polynomials.append((3 * X**2 - 1) / 2)
+        elif i == 5:
+            polynomials.append(X * Y)
+        elif i == 6:
+            polynomials.append((3 * Y**2 - 1) / 2)
+        elif i == 7:
+            polynomials.append((X * (5 * X**2 - 3)) / 2)
+        elif i == 8:
+            polynomials.append((Y * (3 * X**2 - 1)) / 2)
+        elif i == 9:
+            polynomials.append((X * (3 * Y**2 - 1)) / 2)
+        elif i == 10:
+            polynomials.append((Y * (5 * Y**2 - 3)) / 2)
+        elif i == 11:
+            polynomials.append((35 * X**4 - 30 * X**2 + 3) / 8)
+        elif i == 12:
+            polynomials.append((X * Y * (5 * X**2 - 3)) / 2)
+        elif i == 13:
+            polynomials.append(((3 * Y**2 - 1) * (3 * X**2 - 1)) / 4)
+        elif i == 14:
+            polynomials.append((X * Y * (5 * Y**2 - 3)) / 2)
+        elif i == 15:
+            polynomials.append((35 * Y**4 - 30 * Y**2 + 3) / 8)
+    return np.stack(polynomials, axis=-1)
+
+
+def reconstruction_backgroud(coefficients, X, Y, orders):
+    """
+    Reconstructs the phase surface using Legendre coefficients
+    """
+    polynomials = square_legendre_fitting(orders, X, Y)
+    ny, nx, n_terms = polynomials.shape
+
+    # select important coefficients
+    coeffs_used = coefficients[:n_terms]
+
+    # Reconstruction background
+    superficie = np.zeros((ny, nx))
+    for i, coeff in enumerate(coeffs_used):
+        superficie += coeff * polynomials[:, :, i]
+
+    plt.figure(figsize=(10, 4))
+    plt.subplot(1, 2, 1)
+    plt.imshow(superficie, cmap='viridis')
+    plt.title('Legendre-reconstructed background')
+    plt.colorbar()
+
+    plt.subplot(1, 2, 2)
+    plt.plot(coefficients, 'o-')
+    plt.title('Legendre coefficient')
+    plt.xlabel('Legendre Index')
+    plt.ylabel('Coefficient value')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    return superficie
