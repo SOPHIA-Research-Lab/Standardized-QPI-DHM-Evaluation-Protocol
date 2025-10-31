@@ -1,0 +1,6 @@
+*.DS_Store
+*~
+*.asv
+My_app/complexity_algorithm/Hologram_stack
+My_app/complexity_algorithm/Gray_images
+My_app/Samples
