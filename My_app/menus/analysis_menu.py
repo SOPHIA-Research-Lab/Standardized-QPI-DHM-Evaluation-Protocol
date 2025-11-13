@@ -1,352 +1,306 @@
 import wx
+from ui.metric_selection_dialog import show_metric_dialog, MetricSelectionDialog
+from ui.image_selection_dialog import show_image_selection_dialog
 
 def create(parent_frame, notebook):
     analysis_menu = wx.Menu()
-    module1_menu = wx.Menu()
-    module2_menu = wx.Menu()
-    module3_menu = wx.Menu()
-    module4_menu = wx.Menu()
-
+    
+    # Create menu items for each module
+    parent_frame.module1_metrics_id = wx.NewIdRef()
+    parent_frame.module2_metrics_id = wx.NewIdRef()
+    parent_frame.module3_metrics_id = wx.NewIdRef()
     parent_frame.computational_complexity_id = wx.NewIdRef()
-    module4_menu.Append(parent_frame.computational_complexity_id, "Launch Complexity Analyzer")
-
-    # ==========================
-    # STD
-    # ==========================
-    std_submenu = wx.Menu()
-    parent_frame.std_background_unwrapped_id = wx.NewIdRef()
-    parent_frame.std_background_id = wx.NewIdRef()
-    parent_frame.std_background_zones_id = wx.NewIdRef()
-
-    std_submenu.Append(parent_frame.std_background_unwrapped_id, "STD - Unwrapped Background")
-    std_submenu.Append(parent_frame.std_background_id, "STD - Background")
-    std_submenu.Append(parent_frame.std_background_zones_id, "STD - Background Zones")
-
-    module1_menu.AppendSubMenu(std_submenu, "Standard Deviation (STD)")
-
-    # ==========================
-    # MAD
-    # ==========================
-    mad_submenu = wx.Menu()
-    parent_frame.mad_unwrapped_id = wx.NewIdRef()
-    parent_frame.mad_background_id = wx.NewIdRef()
-    parent_frame.mad_background_zones_id = wx.NewIdRef()
-
-    mad_submenu.Append(parent_frame.mad_unwrapped_id, "MAD - Unwrapped Background")
-    mad_submenu.Append(parent_frame.mad_background_id, "MAD - Background")
-    mad_submenu.Append(parent_frame.mad_background_zones_id, "MAD - Background Zones")
-
-    module1_menu.AppendSubMenu(mad_submenu, "Mean Absolute Deviation (MAD)")
-
-    # ==========================
-    # RMS
-    # ==========================
-    rms_submenu = wx.Menu()
-    parent_frame.rms_unwrapped_id = wx.NewIdRef()
-    parent_frame.rms_background_id = wx.NewIdRef()
-    parent_frame.rms_background_zones_id = wx.NewIdRef()
-
-    rms_submenu.Append(parent_frame.rms_unwrapped_id, "RMS - Unwrapped Background")
-    rms_submenu.Append(parent_frame.rms_background_id, "RMS - Background")
-    rms_submenu.Append(parent_frame.rms_background_zones_id, "RMS - Background Zones")
-
-    module1_menu.AppendSubMenu(rms_submenu, "Root Mean Square (RMS)")
-
-    # ==========================
-    # PV
-    # ==========================
-    pv_submenu = wx.Menu()
-    parent_frame.pv_unwrapped_id = wx.NewIdRef()
-    parent_frame.pv_background_id = wx.NewIdRef()
-    parent_frame.pv_background_zones_id = wx.NewIdRef()
-
-    pv_submenu.Append(parent_frame.pv_unwrapped_id, "PV - Unwrapped Background")
-    pv_submenu.Append(parent_frame.pv_background_id, "PV - Background")
-    pv_submenu.Append(parent_frame.pv_background_zones_id, "PV - Background Zones")
-
-    module1_menu.AppendSubMenu(pv_submenu, "Peak-to-Valley (PV)")
-
-    # ==========================
-    # FWHM
-    # ==========================
-    fwhm_submenu = wx.Menu()
-    parent_frame.fwhm_unwrapped_id = wx.NewIdRef()
-    parent_frame.fwhm_background_id = wx.NewIdRef()
-    parent_frame.fwhm_background_zones_id = wx.NewIdRef()
-
-    fwhm_submenu.Append(parent_frame.fwhm_unwrapped_id, "FWHM - Unwrapped Background")
-    fwhm_submenu.Append(parent_frame.fwhm_background_id, "FWHM - Background")
-    fwhm_submenu.Append(parent_frame.fwhm_background_zones_id, "FWHM - Background Zones")
-
-    module1_menu.AppendSubMenu(fwhm_submenu, "Full Width at Half Maximum (FWHM)")
-
-    # ==========================
-    # Entropy
-    # ==========================
-    entropy_submenu = wx.Menu()
-    parent_frame.entropy_unwrapped_id = wx.NewIdRef()
-    parent_frame.entropy_background_id = wx.NewIdRef()
-    parent_frame.entropy_background_zones_id = wx.NewIdRef()
-
-    entropy_submenu.Append(parent_frame.entropy_unwrapped_id, "Entropy - Unwrapped Background")
-    entropy_submenu.Append(parent_frame.entropy_background_id, "Entropy - Background")
-    entropy_submenu.Append(parent_frame.entropy_background_zones_id, "Entropy - Background Zones")
-
-    module1_menu.AppendSubMenu(entropy_submenu, "Entropy")
-
-    # ==========================
-    # Legendre Coefficients
-    # ==========================
-    legendre_submenu = wx.Menu()
-    parent_frame.legendre_unwrapped_id = wx.NewIdRef()
-    parent_frame.legendre_background_id = wx.NewIdRef()
-    parent_frame.legendre_background_zones_id = wx.NewIdRef()
-
-    legendre_submenu.Append(parent_frame.legendre_unwrapped_id, "Legendre - Unwrapped Background")
-    legendre_submenu.Append(parent_frame.legendre_background_id, "Legendre - Background")
-    legendre_submenu.Append(parent_frame.legendre_background_zones_id, "Legendre - Background Zones")
-
-    module1_menu.AppendSubMenu(legendre_submenu, "Legendre Coefficients")
-
-
-    # ==========================
-    # General option: All metrics Mod1
-    # ==========================
-    parent_frame.all_id = wx.NewIdRef()
-    module1_menu.AppendSeparator()
-    module1_menu.Append(parent_frame.all_id, "Calculate All Metrics")
-
-    # ==========================
-    # Global Phase Distortion Metrics (Module 2)
-    # ==========================
     
-    # Maximum-Minus-Minimum 
-    mmm_submenu = wx.Menu()
-    parent_frame.mmm_global_id = wx.NewIdRef()
-    parent_frame.mmm_global_unwrapped_id = wx.NewIdRef()
-    mmm_submenu.Append(parent_frame.mmm_global_id, "Maximum-Minus-Minimum")
-    mmm_submenu.Append(parent_frame.mmm_global_unwrapped_id, "Maximum-Minus-Minimum - Unwrapped")
-    module2_menu.AppendSubMenu(mmm_submenu, "Maximum-Minus-Minimum")
-
-
-    # Global Phase Gradient 
-    gradient_submenu = wx.Menu()
-    parent_frame.gradient_global_id = wx.NewIdRef()
-    parent_frame.gradient_global_unwrapped_id = wx.NewIdRef()
-    gradient_submenu.Append(parent_frame.gradient_global_id, "Phase Gradient")
-    gradient_submenu.Append(parent_frame.gradient_global_unwrapped_id, "Phase Gradient - Unwrapped")
-    module2_menu.AppendSubMenu(gradient_submenu, "Global Phase Gradient")
-
-    # TSM submenu
-    tsm_submenu = wx.Menu()
-    parent_frame.tsm_global_id = wx.NewIdRef()
-    parent_frame.tsm_global_unwrapped_id = wx.NewIdRef()
-    tsm_submenu.Append(parent_frame.tsm_global_id, "TSM")
-    tsm_submenu.Append(parent_frame.tsm_global_unwrapped_id, "TSM - Unwrapped")
-    module2_menu.AppendSubMenu(tsm_submenu, "TSM")
-
-    # Phase Curvature Coefficients submenu
-    curvature_submenu = wx.Menu()
-    parent_frame.curvature_global_id = wx.NewIdRef()
-    parent_frame.curvature_global_unwrapped_id = wx.NewIdRef()
-    curvature_submenu.Append(parent_frame.curvature_global_id, "Phase Curvature")
-    curvature_submenu.Append(parent_frame.curvature_global_unwrapped_id, "Phase Curvature - Unwrapped")
-    module2_menu.AppendSubMenu(curvature_submenu, "Phase Curvature")
-
-    # Laplacian Energy submenu
-    laplacian_submenu = wx.Menu()
-    parent_frame.laplacian_global_id = wx.NewIdRef()
-    parent_frame.laplacian_global_unwrapped_id = wx.NewIdRef()
-    laplacian_submenu.Append(parent_frame.laplacian_global_id, "Laplacian Energy")
-    laplacian_submenu.Append(parent_frame.laplacian_global_unwrapped_id, "Laplacian Energy - Unwrapped")
-    module2_menu.AppendSubMenu(laplacian_submenu, "Laplacian Energy")
-
-    # Spatial Frequency submenu
-    spatial_freq_submenu = wx.Menu()
-    parent_frame.spatial_freq_global_id = wx.NewIdRef()
-    parent_frame.spatial_freq_global_unwrapped_id = wx.NewIdRef()
-    spatial_freq_submenu.Append(parent_frame.spatial_freq_global_id, "Spatial Frequency")
-    spatial_freq_submenu.Append(parent_frame.spatial_freq_global_unwrapped_id, "Spatial Frequency - Unwrapped")
-    module2_menu.AppendSubMenu(spatial_freq_submenu, "Spatial Frequency")
-
-    # Global Entropy submenu
-    entropy_submenu = wx.Menu()
-    parent_frame.global_entropy_global_id = wx.NewIdRef()
-    parent_frame.global_entropy_global_unwrapped_id = wx.NewIdRef()
-    entropy_submenu.Append(parent_frame.global_entropy_global_id, "Entropy")
-    entropy_submenu.Append(parent_frame.global_entropy_global_unwrapped_id, "Entropy - Unwrapped")
-    module2_menu.AppendSubMenu(entropy_submenu, "Global Entropy")
-
-    # Sharpness/Contrast submenu
-    sharpness_submenu = wx.Menu()
-    parent_frame.sharpness_global_id = wx.NewIdRef()
-    parent_frame.sharpness_global_unwrapped_id = wx.NewIdRef()
-    sharpness_submenu.Append(parent_frame.sharpness_global_id, "Sharpness/Contrast")
-    sharpness_submenu.Append(parent_frame.sharpness_global_unwrapped_id, "Sharpness/Contrast - Unwrapped")
-    module2_menu.AppendSubMenu(sharpness_submenu, "Sharpness/Contrast")
-
-    # General option: All metrics Mod2
-    parent_frame.allM2_id = wx.NewIdRef()
-    module2_menu.AppendSeparator()
-    module2_menu.Append(parent_frame.allM2_id, "Calculate All Metrics")
-
-    # ----------------------------------------------------------
-    # Add modules to main menu
-    # ----------------------------------------------------------
-    analysis_menu.AppendSubMenu(module1_menu, "Residual Background Phase Variance")
-    analysis_menu.AppendSubMenu(module2_menu, "Global Phase Distortion Metrics")
-    analysis_menu.AppendSubMenu(module3_menu, "Ground-Truth Comparisons")
-    analysis_menu.AppendSubMenu(module4_menu, "Computational Complexity")
-
-    # Save references (useful for enable/disable)
-    parent_frame.module1_menu = module1_menu
-    parent_frame.module2_menu = module2_menu
-    parent_frame.std_submenu = std_submenu
-    parent_frame.mad_submenu = mad_submenu
-    parent_frame.rms_submenu = rms_submenu
-    parent_frame.pv_submenu = pv_submenu
-    parent_frame.fwhm_submenu = fwhm_submenu
-    parent_frame.entropy_submenu = entropy_submenu
-    parent_frame.legendre_submenu = legendre_submenu
+    analysis_menu.Append(parent_frame.module1_metrics_id, "Residual Background Phase Variance...")
+    analysis_menu.Append(parent_frame.module2_metrics_id, "Global Phase Distortion Metrics...")
+    analysis_menu.Append(parent_frame.module3_metrics_id, "Ground-Truth Comparisons...")
+    analysis_menu.AppendSeparator()
+    analysis_menu.Append(parent_frame.computational_complexity_id, "Computational Complexity")
     
-
-
-    # ----------------------------------------------------------
-    # Bind events - Module 1 (Residual Background Phase Variance)
-    # ----------------------------------------------------------
-    # STD
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_std_background_unwrapped, id=parent_frame.std_background_unwrapped_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_std_background, id=parent_frame.std_background_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_std_background_zones, id=parent_frame.std_background_zones_id)
-
-    # MAD
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_mad_background_unwrapped, id=parent_frame.mad_unwrapped_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_mad_background, id=parent_frame.mad_background_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_mad_background_zones, id=parent_frame.mad_background_zones_id)
-
-    # RMS
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_rms_background_unwrapped, id=parent_frame.rms_unwrapped_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_rms_background, id=parent_frame.rms_background_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_rms_background_zones, id=parent_frame.rms_background_zones_id)
-
-    # PV
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_pv_background_unwrapped, id=parent_frame.pv_unwrapped_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_pv_background, id=parent_frame.pv_background_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_pv_background_zones, id=parent_frame.pv_background_zones_id)
-
-    # FWHM
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_fwhm_background_unwrapped, id=parent_frame.fwhm_unwrapped_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_fwhm_background, id=parent_frame.fwhm_background_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_fwhm_background_zones, id=parent_frame.fwhm_background_zones_id)
-
-    # Entropy
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_entropy_background_unwrapped, id=parent_frame.entropy_unwrapped_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_entropy_background, id=parent_frame.entropy_background_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_entropy_background_zones, id=parent_frame.entropy_background_zones_id)
-    
-    # Legendre Coefficients
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_legendre_background_unwrapped, id=parent_frame.legendre_unwrapped_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_legendre_background, id=parent_frame.legendre_background_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_legendre_background_zones, id=parent_frame.legendre_background_zones_id)
-
-    # All metrics
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_all_metrics, id=parent_frame.all_id)
-
-    # ----------------------------------------------------------
-    # Bind events - Module 2 (Global Phase Distortion Metrics)
-    # ----------------------------------------------------------
-    # Maximum-Minus-Minimum
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_mmm_global, id=parent_frame.mmm_global_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_mmm_global_unwrapped, id=parent_frame.mmm_global_unwrapped_id)
-   
-
-    # Global Phase Gradient
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_gradient_global, id=parent_frame.gradient_global_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_gradient_global_unwrapped, id=parent_frame.gradient_global_unwrapped_id)
-    
-    # TSM
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_tsm_global, id=parent_frame.tsm_global_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_tsm_global_unwrapped, id=parent_frame.tsm_global_unwrapped_id)
-
-    # Phase Curvature Coefficients
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_curvature_global, id=parent_frame.curvature_global_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_curvature_global_unwrapped, id=parent_frame.curvature_global_unwrapped_id)
-
-    # Laplacian Energy
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_laplacian_global, id=parent_frame.laplacian_global_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_laplacian_global_unwrapped, id=parent_frame.laplacian_global_unwrapped_id)
-
-    # Spatial Frequency
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_spatial_freq_global, id=parent_frame.spatial_freq_global_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_spatial_freq_global_unwrapped, id=parent_frame.spatial_freq_global_unwrapped_id)
-
-
-    # Global Entropy
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_global_entropy_global, id=parent_frame.global_entropy_global_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_global_entropy_global_unwrapped, id=parent_frame.global_entropy_global_unwrapped_id)
-
-     # Sharpness/Contrast
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_sharpness_global, id=parent_frame.sharpness_global_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_sharpness_global_unwrapped, id=parent_frame.sharpness_global_unwrapped_id)
-
-    # Legendre Coefficients
-    # parent_frame.Bind(wx.EVT_MENU, parent_frame.on_legendre_global, id=parent_frame.legendre_global_id)
-    # parent_frame.Bind(wx.EVT_MENU, parent_frame.on_legendre_global_unwrapped, id=parent_frame.legendre_global_unwrapped_id)
-
+    # Bind events
+    parent_frame.Bind(wx.EVT_MENU, lambda evt: _show_module1_dialog(parent_frame), id=parent_frame.module1_metrics_id)
+    parent_frame.Bind(wx.EVT_MENU, lambda evt: _show_module2_dialog(parent_frame), id=parent_frame.module2_metrics_id)
+    parent_frame.Bind(wx.EVT_MENU, lambda evt: _show_module3_dialog(parent_frame), id=parent_frame.module3_metrics_id)
     parent_frame.Bind(wx.EVT_MENU, parent_frame.on_computational_complexity, id=parent_frame.computational_complexity_id)
-
-    # All metrics
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_all_global_metrics_M2, id=parent_frame.allM2_id)
-    # ==========================
-    # Ground-Truth Comparisons (Module 3)
-    # ==========================
-
-    # SSIM submenu
-    ssim_submenu = wx.Menu()
-    parent_frame.ssim_comparison_id = wx.NewIdRef()
-    parent_frame.ssim_comparison_unwrapped_id = wx.NewIdRef()
-    ssim_submenu.Append(parent_frame.ssim_comparison_id, "Structural Similarity (SSIM)")
-    ssim_submenu.Append(parent_frame.ssim_comparison_unwrapped_id, "Structural Similarity (SSIM) Unwrapped")
-    module3_menu.AppendSubMenu(ssim_submenu, "SSIM (Structural Similarity)")
-
-    # MSE submenu
-    mse_submenu = wx.Menu()
-    parent_frame.mse_comparison_id = wx.NewIdRef()
-    parent_frame.mse_comparison_unwrapped_id = wx.NewIdRef()
-    mse_submenu.Append(parent_frame.mse_comparison_id, "Mean Squared Error (MSE)")
-    mse_submenu.Append(parent_frame.mse_comparison_unwrapped_id, "Mean Squared Error (MSE) Unwrapped")
-    module3_menu.AppendSubMenu(mse_submenu, "MSE (Mean Squared Error)")
-
-    # PSNR submenu
-    psnr_submenu = wx.Menu()
-    parent_frame.psnr_comparison_id = wx.NewIdRef()
-    parent_frame.psnr_comparison_unwrapped_id = wx.NewIdRef()
-    psnr_submenu.Append(parent_frame.psnr_comparison_id, "Peak Signal-to-Noise Ratio (PSNR)")
-    psnr_submenu.Append(parent_frame.psnr_comparison_unwrapped_id, "Peak Signal-to-Noise Ratio (PSNR) Unwrapped")
-    module3_menu.AppendSubMenu(psnr_submenu, "PSNR")
-
-    # Opción para cargar Ground-Truth
-    module3_menu.AppendSeparator()
-    parent_frame.load_ground_truth_id = wx.NewIdRef()
-    module3_menu.Append(parent_frame.load_ground_truth_id, "Load Ground-Truth Image...")
-
-    # ----------------------------------------------------------
-    # Bind events - Module 3 (Ground-Truth Comparisons)
-    # ----------------------------------------------------------
-    # SSIM
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_ssim_comparison, id=parent_frame.ssim_comparison_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_ssim_comparison_unwrapped, id=parent_frame.ssim_comparison_unwrapped_id)
-
-    # MSE
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_mse_comparison, id=parent_frame.mse_comparison_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_mse_comparison_unwrapped, id=parent_frame.mse_comparison_unwrapped_id)
-
-    # PSNR
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_psnr_comparison, id=parent_frame.psnr_comparison_id)
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_psnr_comparison_unwrapped, id=parent_frame.psnr_comparison_unwrapped_id)
-
-    # Load Ground-Truth
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_load_ground_truth, id=parent_frame.load_ground_truth_id)
-
-
+    
     return analysis_menu
+
+
+# ==========================
+# Module 1: Residual Background Phase Variance
+# ==========================
+
+def _show_module1_dialog(parent_frame):
+    """Show dialog with ALL Module 1 metrics."""
+    config = {
+        # STD metrics
+        'std_unwrapped': {'label': 'STD - Unwrapped Background'},
+        'std_background': {'label': 'STD - Background'},
+        'std_zones': {'label': 'STD - Background Zones'},
+        
+        # MAD metrics
+        'mad_unwrapped': {'label': 'MAD - Unwrapped Background'},
+        'mad_background': {'label': 'MAD - Background'},
+        'mad_zones': {'label': 'MAD - Background Zones'},
+        
+        # RMS metrics
+        'rms_unwrapped': {'label': 'RMS - Unwrapped Background'},
+        'rms_background': {'label': 'RMS - Background'},
+        'rms_zones': {'label': 'RMS - Background Zones'},
+        
+        # PV metrics
+        'pv_unwrapped': {'label': 'PV - Unwrapped Background'},
+        'pv_background': {'label': 'PV - Background'},
+        'pv_zones': {'label': 'PV - Background Zones'},
+        
+        # FWHM metrics
+        'fwhm_unwrapped': {'label': 'FWHM - Unwrapped Background'},
+        'fwhm_background': {'label': 'FWHM - Background'},
+        'fwhm_zones': {'label': 'FWHM - Background Zones'},
+        
+        # Entropy metrics
+        'entropy_unwrapped': {'label': 'Entropy - Unwrapped Background'},
+        'entropy_background': {'label': 'Entropy - Background'},
+        'entropy_zones': {'label': 'Entropy - Background Zones'},
+        
+        # Legendre metrics
+        'legendre_unwrapped': {'label': 'Legendre - Unwrapped Background'},
+        'legendre_background': {'label': 'Legendre - Background'},
+        'legendre_zones': {'label': 'Legendre - Background Zones'},
+    }
+    
+    selected = show_metric_dialog(parent_frame, "Residual Background Phase Variance - Select Metrics", config)
+    
+    if selected:
+        handlers = {
+            # STD
+            'std_unwrapped': parent_frame.on_std_background_unwrapped,
+            'std_background': parent_frame.on_std_background,
+            'std_zones': parent_frame.on_std_background_zones,
+            
+            # MAD
+            'mad_unwrapped': parent_frame.on_mad_background_unwrapped,
+            'mad_background': parent_frame.on_mad_background,
+            'mad_zones': parent_frame.on_mad_background_zones,
+            
+            # RMS
+            'rms_unwrapped': parent_frame.on_rms_background_unwrapped,
+            'rms_background': parent_frame.on_rms_background,
+            'rms_zones': parent_frame.on_rms_background_zones,
+            
+            # PV
+            'pv_unwrapped': parent_frame.on_pv_background_unwrapped,
+            'pv_background': parent_frame.on_pv_background,
+            'pv_zones': parent_frame.on_pv_background_zones,
+            
+            # FWHM
+            'fwhm_unwrapped': parent_frame.on_fwhm_background_unwrapped,
+            'fwhm_background': parent_frame.on_fwhm_background,
+            'fwhm_zones': parent_frame.on_fwhm_background_zones,
+            
+            # Entropy
+            'entropy_unwrapped': parent_frame.on_entropy_background_unwrapped,
+            'entropy_background': parent_frame.on_entropy_background,
+            'entropy_zones': parent_frame.on_entropy_background_zones,
+            
+            # Legendre
+            'legendre_unwrapped': parent_frame.on_legendre_background_unwrapped,
+            'legendre_background': parent_frame.on_legendre_background,
+            'legendre_zones': parent_frame.on_legendre_background_zones,
+        }
+        
+        _process_selected_metrics(parent_frame, selected, handlers)
+
+
+# ==========================
+# Module 2: Global Phase Distortion Metrics
+# ==========================
+
+def _show_module2_dialog(parent_frame):
+    """Show dialog with ALL Module 2 metrics."""
+    config = {
+        # Maximum-Minus-Minimum
+        'mmm_global': {'label': 'Maximum-Minus-Minimum'},
+        'mmm_unwrapped': {'label': 'Maximum-Minus-Minimum - Unwrapped'},
+        
+        # Global Phase Gradient
+        'gradient_global': {'label': 'Phase Gradient'},
+        'gradient_unwrapped': {'label': 'Phase Gradient - Unwrapped'},
+        
+        # TSM
+        'tsm_global': {'label': 'TSM'},
+        'tsm_unwrapped': {'label': 'TSM - Unwrapped'},
+        
+        # Phase Curvature
+        'curvature_global': {'label': 'Phase Curvature'},
+        'curvature_unwrapped': {'label': 'Phase Curvature - Unwrapped'},
+        
+        # Laplacian Energy
+        'laplacian_global': {'label': 'Laplacian Energy'},
+        'laplacian_unwrapped': {'label': 'Laplacian Energy - Unwrapped'},
+        
+        # Spatial Frequency
+        'spatial_freq_global': {'label': 'Spatial Frequency'},
+        'spatial_freq_unwrapped': {'label': 'Spatial Frequency - Unwrapped'},
+        
+        # Global Entropy
+        'global_entropy': {'label': 'Global Entropy'},
+        'global_entropy_unwrapped': {'label': 'Global Entropy - Unwrapped'},
+        
+        # Sharpness/Contrast
+        'sharpness_global': {'label': 'GSM (Generalized Sharpness Metric)'},
+        'sharpness_unwrapped': {'label': 'GSM (Generalized Sharpness Metric) - Unwrapped'},
+    }
+    
+    selected = show_metric_dialog(parent_frame, "Global Phase Distortion Metrics - Select Metrics", config)
+    
+    if selected:
+        handlers = {
+            # MMM
+            'mmm_global': parent_frame.on_mmm_global,
+            'mmm_unwrapped': parent_frame.on_mmm_global_unwrapped,
+            
+            # Gradient
+            'gradient_global': parent_frame.on_gradient_global,
+            'gradient_unwrapped': parent_frame.on_gradient_global_unwrapped,
+            
+            # TSM
+            'tsm_global': parent_frame.on_tsm_global,
+            'tsm_unwrapped': parent_frame.on_tsm_global_unwrapped,
+            
+            # Curvature
+            'curvature_global': parent_frame.on_curvature_global,
+            'curvature_unwrapped': parent_frame.on_curvature_global_unwrapped,
+            
+            # Laplacian
+            'laplacian_global': parent_frame.on_laplacian_global,
+            'laplacian_unwrapped': parent_frame.on_laplacian_global_unwrapped,
+            
+            # Spatial Frequency
+            'spatial_freq_global': parent_frame.on_spatial_freq_global,
+            'spatial_freq_unwrapped': parent_frame.on_spatial_freq_global_unwrapped,
+            
+            # Global Entropy
+            'global_entropy': parent_frame.on_global_entropy_global,
+            'global_entropy_unwrapped': parent_frame.on_global_entropy_global_unwrapped,
+            
+            # Sharpness
+            'sharpness_global': parent_frame.on_sharpness_global,
+            'sharpness_unwrapped': parent_frame.on_sharpness_global_unwrapped,
+        }
+        
+        _process_selected_metrics(parent_frame, selected, handlers)
+
+
+# ==========================
+# Module 3: Ground-Truth Comparisons
+# ==========================
+
+def _show_module3_dialog(parent_frame):
+    """Show dialog with ALL Module 3 metrics."""
+    # First check if ground truth is loaded
+    if not hasattr(parent_frame, 'ground_truth_data') or parent_frame.ground_truth_data is None:
+        response = wx.MessageBox(
+            "No ground-truth image loaded.\n\nDo you want to load one now?",
+            "Ground-Truth Required",
+            wx.YES_NO | wx.ICON_QUESTION
+        )
+        
+        if response == wx.YES:
+            parent_frame.on_load_ground_truth(None)
+            
+            # Check again if it was loaded
+            if not hasattr(parent_frame, 'ground_truth_data') or parent_frame.ground_truth_data is None:
+                return  # User cancelled or failed to load
+        else:
+            return  # User chose not to load
+    
+    config = {
+        # SSIM
+        'ssim': {'label': 'Structural Similarity (SSIM)'},
+        'ssim_unwrapped': {'label': 'Structural Similarity (SSIM) - Unwrapped'},
+        
+        # MSE
+        'mse': {'label': 'Mean Squared Error (MSE)'},
+        'mse_unwrapped': {'label': 'Mean Squared Error (MSE) - Unwrapped'},
+        
+        # PSNR
+        'psnr': {'label': 'Peak Signal-to-Noise Ratio (PSNR)'},
+        'psnr_unwrapped': {'label': 'Peak Signal-to-Noise Ratio (PSNR) - Unwrapped'},
+    }
+    
+    selected = show_metric_dialog(parent_frame, "Ground-Truth Comparisons - Select Metrics", config)
+    
+    if selected:
+        handlers = {
+            # SSIM
+            'ssim': parent_frame.on_ssim_comparison,
+            'ssim_unwrapped': parent_frame.on_ssim_comparison_unwrapped,
+            
+            # MSE
+            'mse': parent_frame.on_mse_comparison,
+            'mse_unwrapped': parent_frame.on_mse_comparison_unwrapped,
+            
+            # PSNR
+            'psnr': parent_frame.on_psnr_comparison,
+            'psnr_unwrapped': parent_frame.on_psnr_comparison_unwrapped,
+        }
+        
+        _process_selected_metrics(parent_frame, selected, handlers)
+
+
+# ==========================
+# Helper function
+# ==========================
+
+def process_selected_metrics(parent_frame, module_metrics_config):
+    """Process multiple selected metrics."""
+    # Mostrar diálogo de selección de métricas
+    dlg = MetricSelectionDialog(parent_frame, metrics_config=module_metrics_config)
+    
+    if dlg.ShowModal() == wx.ID_OK:
+        selected_metrics = dlg.get_selected_metrics()
+        
+        if not selected_metrics:
+            wx.MessageBox("No metrics selected", "Info", wx.ICON_INFORMATION)
+            dlg.Destroy()
+            return
+        
+        # Mostrar diálogo de selección de imágenes UNA SOLA VEZ
+        selected_indices = show_image_selection_dialog(parent_frame, parent_frame.notebook)
+        
+        if selected_indices is None or len(selected_indices) == 0:
+            dlg.Destroy()
+            return
+        
+        # Calcular todas las métricas para todas las imágenes
+        parent_frame._calculate_multiple_metrics(selected_metrics, selected_indices)
+    
+    dlg.Destroy()
+
+# ==========================
+# Helper function
+# ==========================
+
+def _process_selected_metrics(parent_frame, selected_metrics, handlers):
+    """
+    Process selected metrics using the new cached multi-metric system.
+    
+    Args:
+        parent_frame: MainFrame instance
+        selected_metrics: Dict of {metric_id: label_string}
+        handlers: Dict of {metric_id: handler_function} (DEPRECATED for cached system)
+    """
+    if not selected_metrics:
+        wx.MessageBox("No metrics selected", "Info", wx.ICON_INFORMATION)
+        return
+    
+    # Show image selection dialog ONCE
+    selected_indices = show_image_selection_dialog(parent_frame, parent_frame.notebook)
+    
+    if selected_indices is None or len(selected_indices) == 0:
+        return  # User cancelled
+    
+    # Process ALL metrics together (including zones) using the cache system
+    # The cache system will handle zones intelligently (shared or per-image)
+    parent_frame._calculate_multiple_metrics(selected_metrics, selected_indices)

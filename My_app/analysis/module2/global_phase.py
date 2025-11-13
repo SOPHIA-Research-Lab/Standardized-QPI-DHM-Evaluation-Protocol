@@ -167,8 +167,6 @@ def laplacian_energy(phase: np.ndarray, use_unwrap: bool = False):
 
 
 def maximum_minus_minimum(phase: np.ndarray, use_unwrap: bool = False):
-    print(f"[DEBUG] use_unwrap received: {use_unwrap} (type: {type(use_unwrap)})")
-
     """
     Calculates the Maximum - Minimum difference of a phase image.
 
@@ -215,8 +213,6 @@ def spatial_frequency_global(phase: np.ndarray, use_unwrap: bool = False):
     """
     # Input validation
     phase = np.asarray(phase, dtype=np.float64)
-    print(phase.ndim)
-    print(phase.shape)
     if phase.ndim != 2:
         raise ValueError("Phase image must be 2D.")
 
@@ -588,6 +584,5 @@ def reconstruction_background(coefficients, X, Y, orders):
     plt.ylabel('Value')
     plt.grid(True)
     plt.tight_layout()
-    plt.show()
-
+    plt.show(block=True)
     return superficie

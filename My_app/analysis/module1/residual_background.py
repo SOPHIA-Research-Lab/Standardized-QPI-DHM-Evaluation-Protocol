@@ -6,131 +6,336 @@ from matplotlib.widgets import Button
 from skimage.restoration import unwrap_phase
 from numpy.fft import fft2, ifft2, fftshift, ifftshift
 from scipy.sparse.linalg import svds
+import cv2
+from typing import List, Tuple
+import wx
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+
 
 
 class ManualRectangleSelector:
-    """Interactive rectangle selector for manual zone selection."""
+    """Interactive rectangle selector using wxPython (replaces matplotlib version)."""
     
     def __init__(self, img: np.ndarray, num_zones: int):
-        self.img = img
+        self.img = np.array(img, dtype=float)
         self.num_zones = num_zones
         self.rectangles = []
-        self.current_rect = None
-        self.start_point = None
         self.finished = False
-        self.fig, self.ax = plt.subplots(figsize=(10, 8))
-        self.setup_plot()
-
-    def setup_plot(self):
-        """Setup the interactive plot."""
-        self.ax.imshow(self.img, cmap='viridis')
-        self.ax.set_title(f'Select {self.num_zones} rectangles. Current: 0/{self.num_zones}')
-
-        self.fig.canvas.mpl_connect('button_press_event', self.on_press)
-        self.fig.canvas.mpl_connect('button_release_event', self.on_release)
-        self.fig.canvas.mpl_connect('motion_notify_event', self.on_motion)
-
-        ax_button = plt.axes([0.81, 0.01, 0.1, 0.05])
-        self.button = Button(ax_button, 'Finish')
-        self.button.on_clicked(self.finish_selection)
-
-    def on_press(self, event):
-        """Handle mouse press event."""
-        if event.inaxes != self.ax or self.finished:
-            return
-        self.start_point = (event.xdata, event.ydata)
-
-    def on_motion(self, event):
-        """Handle mouse motion event."""
-        if self.start_point is None or event.inaxes != self.ax or self.finished:
-            return
-
-        if self.current_rect:
-            self.current_rect.remove()
-
-        x0, y0 = self.start_point
-        width = event.xdata - x0
-        height = event.ydata - y0
-
-        self.current_rect = patches.Rectangle(
-            (x0, y0), width, height,
-            linewidth=2, edgecolor='red', facecolor='none', alpha=0.7
-        )
-        self.ax.add_patch(self.current_rect)
-        self.fig.canvas.draw()
-
-    def on_release(self, event):
-        """Handle mouse release event."""
-        if self.start_point is None or event.inaxes != self.ax or self.finished:
-            return
-
-        x0, y0 = self.start_point
-        x1, y1 = event.xdata, event.ydata
-
-        xmin, xmax = min(x0, x1), max(x0, x1)
-        ymin, ymax = min(y0, y1), max(y0, y1)
-
-        xmin = int(max(0, min(xmin, self.img.shape[1] - 1)))
-        xmax = int(max(0, min(xmax, self.img.shape[1] - 1)))
-        ymin = int(max(0, min(ymin, self.img.shape[0] - 1)))
-        ymax = int(max(0, min(ymax, self.img.shape[0] - 1)))
-
-        if xmax > xmin and ymax > ymin:
-            rect_coords = (xmin, xmax, ymin, ymax)
-            self.rectangles.append(rect_coords)
-
-            if self.current_rect:
-                self.current_rect.remove()
-
-            final_rect = patches.Rectangle(
-                (xmin, ymin), xmax - xmin, ymax - ymin,
-                linewidth=2, edgecolor='blue', facecolor='none', alpha=0.8
-            )
-            self.ax.add_patch(final_rect)
-            self.ax.text(xmin + 5, ymin + 15, f'{len(self.rectangles)}',
-                         color='blue', fontsize=12, fontweight='bold')
-
-        self.current_rect = None
-        self.start_point = None
-        self.ax.set_title(f'Select {self.num_zones} rectangles. Current: {len(self.rectangles)}/{self.num_zones}')
-        self.fig.canvas.draw()
-
-        if len(self.rectangles) >= self.num_zones:
-            print(f"Target number of zones reached ({self.num_zones}). Auto-finishing...")
-            self.auto_finish()
-
-    def auto_finish(self):
-        """Automatic completion when number of zones is reached."""
+        
+        # Create wx.App if needed
+        self.app_created = False
+        app = wx.GetApp()
+        if app is None:
+            self.app = wx.App(False)
+            self.app_created = True
+        else:
+            self.app = app
+        
+        # Create and show dialog
+        self.dialog = WxRectangleSelectorDialog(None, self.img, self.num_zones)
+    
+    def show(self):
+        """Show the selector dialog."""
+        result = self.dialog.ShowModal()
+        self.rectangles = self.dialog.get_rectangles() if result == wx.ID_OK else []
         self.finished = True
-        print(f"Complete! {len(self.rectangles)} zones selected. Closing interface...")
-        plt.close(self.fig)
-
-    def finish_selection(self, event):
-        """Manual completion via button."""
-        print(f"User clicked Finish. Selected {len(self.rectangles)} zones.")
-        self.finished = True
-        plt.close(self.fig)
-
+        self.dialog.Destroy()
+        
+        # Clean up app if we created it
+        if self.app_created:
+            try:
+                self.app.Destroy()
+            except Exception:
+                pass
+    
     def get_rectangles(self) -> List[Tuple[int, int, int, int]]:
         """Return selected rectangles."""
         return self.rectangles
 
 
-def select_manual_zones(img: np.ndarray, num_zones: int) -> List[Tuple[int, int, int, int]]:
-    """Select rectangular areas manually. Auto-finishes when zones completed."""
-    print(f"Opening zone selection interface for {num_zones} zones...")
-    selector = ManualRectangleSelector(img, num_zones)
-    plt.show(block=False)
+class WxRectangleSelectorDialog(wx.Dialog):
+    """Interactive rectangle selector dialog using wxPython."""
     
-    while plt.fignum_exists(selector.fig.number) and not selector.finished:
-        plt.pause(0.1)
+    def __init__(self, parent, image: np.ndarray, num_zones: int):
+        super().__init__(parent, title="Zone Selection", 
+                        style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX)
+        
+        self.image = np.array(image, dtype=float)
+        self.num_zones = num_zones
+        self.rectangles = []  # List of (xmin, xmax, ymin, ymax)
+        self.current_rect = None  # (start_x, start_y, end_x, end_y)
+        self.is_drawing = False
+        self.finished = False
+        
+        # Convert image to uint8 for display
+        img_min, img_max = self.image.min(), self.image.max()
+        if img_max - img_min > 1e-12:
+            img_normalized = (self.image - img_min) / (img_max - img_min)
+        else:
+            img_normalized = np.zeros_like(self.image)
+        self.img_u8 = (img_normalized * 255).astype(np.uint8)
+        
+        # Calculate display size
+        display_size = wx.GetDisplaySize()
+        max_width = int(display_size[0] * 0.8)
+        max_height = int(display_size[1] * 0.8)
+        
+        img_h, img_w = self.img_u8.shape
+        scale_w = max_width / img_w
+        scale_h = max_height / img_h
+        self.scale = min(scale_w, scale_h, 1.5)  # Don't scale up too much
+        
+        self.display_w = int(img_w * self.scale)
+        self.display_h = int(img_h * self.scale)
+        
+        self.SetSize((self.display_w + 40, self.display_h + 120))
+        self.Centre()
+        
+        self._build_ui()
+        self._update_display()
+    
+    def _build_ui(self):
+        main_sizer = wx.BoxSizer(wx.VERTICAL)
+        
+        # Title and instructions
+        self.title_text = wx.StaticText(
+            self, 
+            label=f"Select {self.num_zones} zones - Current: 0/{self.num_zones}\nClick and drag to draw rectangles"
+        )
+        font = self.title_text.GetFont()
+        font.PointSize += 2
+        font = font.Bold()
+        self.title_text.SetFont(font)
+        main_sizer.Add(self.title_text, 0, wx.ALL | wx.ALIGN_CENTER, 10)
+        
+        # Create panel for image display
+        self.image_panel = wx.Panel(self, size=(self.display_w, self.display_h))
+        self.image_panel.SetBackgroundColour(wx.Colour(50, 50, 50))
+        
+        # StaticBitmap for image
+        self.bitmap_widget = wx.StaticBitmap(self.image_panel)
+        self.bitmap_widget.SetPosition((0, 0))
+        
+        # Bind mouse events
+        self.bitmap_widget.Bind(wx.EVT_LEFT_DOWN, self._on_mouse_down)
+        self.bitmap_widget.Bind(wx.EVT_LEFT_UP, self._on_mouse_up)
+        self.bitmap_widget.Bind(wx.EVT_MOTION, self._on_mouse_move)
+        
+        main_sizer.Add(self.image_panel, 1, wx.ALL | wx.EXPAND, 5)
+        
+        # Control buttons
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        
+        self.btn_undo = wx.Button(self, label="Undo Last")
+        self.btn_clear = wx.Button(self, label="Clear All")
+        self.btn_finish = wx.Button(self, label="Finish")
+        self.btn_cancel = wx.Button(self, label="Cancel")
+        
+        self.btn_undo.Enable(False)
+        self.btn_clear.Enable(False)
+        
+        btn_sizer.Add(self.btn_undo, 0, wx.ALL, 5)
+        btn_sizer.Add(self.btn_clear, 0, wx.ALL, 5)
+        btn_sizer.AddStretchSpacer()
+        btn_sizer.Add(self.btn_finish, 0, wx.ALL, 5)
+        btn_sizer.Add(self.btn_cancel, 0, wx.ALL, 5)
+        
+        main_sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 5)
+        
+        self.SetSizer(main_sizer)
+        
+        # Bind button events
+        self.btn_undo.Bind(wx.EVT_BUTTON, self._on_undo)
+        self.btn_clear.Bind(wx.EVT_BUTTON, self._on_clear)
+        self.btn_finish.Bind(wx.EVT_BUTTON, self._on_finish)
+        self.btn_cancel.Bind(wx.EVT_BUTTON, self._on_cancel)
+    
+    def _update_display(self):
+        """Redraw the image with all rectangles."""
+        # Create RGB image from grayscale
+        rgb_array = np.dstack([self.img_u8, self.img_u8, self.img_u8]).copy()
+        
+        # Draw saved rectangles in blue
+        for i, (xmin, xmax, ymin, ymax) in enumerate(self.rectangles):
+            cv2.rectangle(rgb_array, (xmin, ymin), (xmax, ymax), (0, 0, 255), 4)
+            cv2.putText(rgb_array, f"{i+1}", (xmin + 5, ymin + 25),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 3)
+        
+        # Draw current rectangle being drawn in red
+        if self.current_rect is not None:
+            x0, y0, x1, y1 = self.current_rect
+            xmin, xmax = min(x0, x1), max(x0, x1)
+            ymin, ymax = min(y0, y1), max(y0, y1)
+            cv2.rectangle(rgb_array, (xmin, ymin), (xmax, ymax), (255, 0, 0), 4)
+        
+        # Scale image for display
+        if self.scale != 1.0:
+            rgb_display = cv2.resize(rgb_array, (self.display_w, self.display_h), 
+                                    interpolation=cv2.INTER_LINEAR)
+        else:
+            rgb_display = rgb_array
+        
+        # Convert to wx.Bitmap
+        height, width = rgb_display.shape[:2]
+        wx_image = wx.Image(width, height)
+        wx_image.SetData(rgb_display.tobytes())
+        bitmap = wx.Bitmap(wx_image)
+        
+        self.bitmap_widget.SetBitmap(bitmap)
+        self.bitmap_widget.SetSize((width, height))
+        
+        # Update title
+        self.title_text.SetLabel(
+            f"Select {self.num_zones} zones - Current: {len(self.rectangles)}/{self.num_zones}\n"
+            f"Click and drag to draw rectangles"
+        )
+        
+        # Update button states
+        self.btn_undo.Enable(len(self.rectangles) > 0)
+        self.btn_clear.Enable(len(self.rectangles) > 0)
+        
+        self.Refresh()
+    
+    def _screen_to_image_coords(self, screen_x, screen_y):
+        """Convert screen coordinates to image coordinates."""
+        img_x = int(screen_x / self.scale)
+        img_y = int(screen_y / self.scale)
+        
+        # Clamp to image boundaries
+        img_h, img_w = self.img_u8.shape
+        img_x = max(0, min(img_x, img_w - 1))
+        img_y = max(0, min(img_y, img_h - 1))
+        
+        return img_x, img_y
+    
+    def _on_mouse_down(self, event):
+        """Handle mouse button press."""
+        if self.finished:
+            return
+        
+        pos = event.GetPosition()
+        img_x, img_y = self._screen_to_image_coords(pos.x, pos.y)
+        
+        self.is_drawing = True
+        self.current_rect = (img_x, img_y, img_x, img_y)
+        self._update_display()
+    
+    def _on_mouse_move(self, event):
+        """Handle mouse movement."""
+        if not self.is_drawing or self.finished:
+            return
+        
+        pos = event.GetPosition()
+        img_x, img_y = self._screen_to_image_coords(pos.x, pos.y)
+        
+        if self.current_rect is not None:
+            x0, y0 = self.current_rect[:2]
+            self.current_rect = (x0, y0, img_x, img_y)
+            self._update_display()
+    
+    def _on_mouse_up(self, event):
+        """Handle mouse button release."""
+        if not self.is_drawing or self.finished:
+            return
+        
+        pos = event.GetPosition()
+        img_x, img_y = self._screen_to_image_coords(pos.x, pos.y)
+        
+        if self.current_rect is not None:
+            x0, y0 = self.current_rect[:2]
+            x1, y1 = img_x, img_y
+            
+            xmin, xmax = min(x0, x1), max(x0, x1)
+            ymin, ymax = min(y0, y1), max(y0, y1)
+            
+            # Only add if rectangle has some area
+            if xmax > xmin + 2 and ymax > ymin + 2:
+                self.rectangles.append((xmin, xmax, ymin, ymax))                
+                # Auto-finish if we reached target number
+                if len(self.rectangles) >= self.num_zones:
+                    wx.CallAfter(self._auto_finish)
+        
+        self.is_drawing = False
+        self.current_rect = None
+        self._update_display()
+    
+    def _on_undo(self, event):
+        """Remove last rectangle."""
+        if self.rectangles:
+            removed = self.rectangles.pop()
+            self._update_display()
+    
+    def _on_clear(self, event):
+        """Clear all rectangles."""
+        if self.rectangles:
+            dlg = wx.MessageDialog(
+                self,
+                f"Clear all {len(self.rectangles)} zones?",
+                "Confirm Clear",
+                wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION
+            )
+            if dlg.ShowModal() == wx.ID_YES:
+                self.rectangles.clear()
+                self._update_display()
+            dlg.Destroy()
+    
+    def _auto_finish(self):
+        """Auto-finish when target reached."""
+        self.finished = True
+        self.EndModal(wx.ID_OK)
+    
+    def _on_finish(self, event):
+        """Manual finish via button."""
+        if len(self.rectangles) == 0:
+            dlg = wx.MessageDialog(
+                self,
+                "No zones selected. Do you want to cancel?",
+                "No Zones",
+                wx.YES_NO | wx.ICON_WARNING
+            )
+            if dlg.ShowModal() == wx.ID_YES:
+                dlg.Destroy()
+                self._on_cancel(None)
+                return
+            dlg.Destroy()
+            return
+        
+        self.finished = True
+        self.EndModal(wx.ID_OK)
+    
+    def _on_cancel(self, event):
+        """Cancel selection."""
+        if self.rectangles:
+            dlg = wx.MessageDialog(
+                self,
+                f"Cancel and discard {len(self.rectangles)} zones?",
+                "Confirm Cancel",
+                wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION
+            )
+            result = dlg.ShowModal()
+            dlg.Destroy()
+            if result != wx.ID_YES:
+                return
+        
+        self.rectangles.clear()
+        self.finished = False
+        self.EndModal(wx.ID_CANCEL)
+    
+    def get_rectangles(self):
+        """Return selected rectangles."""
+        return self.rectangles
+
+
+def select_manual_zones(img: np.ndarray, num_zones: int) -> List[Tuple[int, int, int, int]]:
+    """Select rectangular areas manually using wxPython. Auto-finishes when zones completed."""
+    selector = ManualRectangleSelector(img, num_zones)
+    selector.show()
     
     zones = selector.get_rectangles()
-    print(f"Zone selection completed. Selected {len(zones)} zones.")
-    if len(zones) == 0:
-        print("WARNING: User did not select any zones.")
+    # if len(zones) == 0:
+    #     print("WARNING: User did not select any zones.")
     return zones
-
 
 def unwrap_with_scikit(wrapped_phase: np.ndarray) -> np.ndarray:
     """Unwrap phase images using scikit-image."""
@@ -143,27 +348,22 @@ def std_background(img: np.ndarray, mask: Optional[np.ndarray] = None,
     if manual:
         zones = select_manual_zones(img, num_zones)
         if not zones:
-            print("No zones selected.")
             return np.nan, []
 
         zone_stats = []
         std_values = []
-        print("\n=== STD per Zone ===")
         
         for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
             zone_img = img[ymin:ymax, xmin:xmax]
             zone_std = float(np.std(zone_img))
             std_values.append(zone_std)
             zone_stats.append({'zone': i, 'std': zone_std, 'coords': (xmin, xmax, ymin, ymax)})
-            print(f"Zone {i}: STD = {zone_std:.4f}")
 
         std_mean = float(np.mean(std_values))
-        print(f"Mean STD: {std_mean:.4f}")
         return std_mean, zone_stats
 
     values = img[mask] if mask is not None else img.flatten()
     std_val = float(np.std(values))
-    print(f"STD whole background: {std_val:.4f}")
     return std_val
 
 
@@ -173,12 +373,10 @@ def mean_absolute_deviation_background(img: np.ndarray, mask: Optional[np.ndarra
     if manual:
         zones = select_manual_zones(img, num_zones)
         if not zones:
-            print("No zones selected.")
             return np.nan, []
 
         zone_stats = []
         mad_values = []
-        print("\n=== MAD per Zone ===")
         
         for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
             zone_img = img[ymin:ymax, xmin:xmax]
@@ -186,16 +384,13 @@ def mean_absolute_deviation_background(img: np.ndarray, mask: Optional[np.ndarra
             zone_mad = float(np.mean(np.abs(zone_img - zone_mean)))
             mad_values.append(zone_mad)
             zone_stats.append({'zone': i, 'mad': zone_mad, 'coords': (xmin, xmax, ymin, ymax)})
-            print(f"Zone {i}: MAD = {zone_mad:.4f}")
 
         mad_mean = float(np.mean(mad_values))
-        print(f"Mean MAD: {mad_mean:.4f}")
         return mad_mean, zone_stats
 
     values = img[mask] if mask is not None else img.flatten()
     mean_val = np.mean(values)
     mad = float(np.mean(np.abs(values - mean_val)))
-    print(f"MAD whole background: {mad:.4f}")
     return mad
 
 
@@ -205,27 +400,22 @@ def rms_background(img: np.ndarray, mask: Optional[np.ndarray] = None,
     if manual:
         zones = select_manual_zones(img, num_zones)
         if not zones:
-            print("No zones selected.")
             return np.nan, []
 
         zone_stats = []
         rms_values = []
-        print("\n=== RMS per Zone ===")
         
         for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
             zone_img = img[ymin:ymax, xmin:xmax]
             zone_rms = float(np.sqrt(np.mean((zone_img - np.mean(zone_img)) ** 2)))
             rms_values.append(zone_rms)
             zone_stats.append({'zone': i, 'rms': zone_rms, 'coords': (xmin, xmax, ymin, ymax)})
-            print(f"Zone {i}: RMS = {zone_rms:.4f}")
 
         rms_mean = float(np.mean(rms_values))
-        print(f"Mean RMS: {rms_mean:.4f}")
         return rms_mean, zone_stats
 
     values = img[mask] if mask is not None else img.flatten()
     rms_val = float(np.sqrt(np.mean((values - np.mean(values)) ** 2)))
-    print(f"RMS whole background: {rms_val:.4f}")
     return rms_val
 
 
@@ -235,27 +425,22 @@ def pv_background(img: np.ndarray, mask: Optional[np.ndarray] = None,
     if manual:
         zones = select_manual_zones(img, num_zones)
         if not zones:
-            print("No zones selected.")
             return np.nan, []
 
         zone_stats = []
         pv_values = []
-        print("\n=== PV per Zone ===")
         
         for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
             zone_img = img[ymin:ymax, xmin:xmax]
             zone_pv = float(np.max(zone_img) - np.min(zone_img))
             pv_values.append(zone_pv)
             zone_stats.append({'zone': i, 'pv': zone_pv, 'coords': (xmin, xmax, ymin, ymax)})
-            print(f"Zone {i}: PV = {zone_pv:.4f}")
 
         pv_mean = float(np.mean(pv_values))
-        print(f"Mean PV: {pv_mean:.4f}")
         return pv_mean, zone_stats
 
     values = img[mask] if mask is not None else img.flatten()
     pv_val = float(np.max(values) - np.min(values))
-    print(f"PV whole background: {pv_val:.4f}")
     return pv_val
 
 
@@ -306,27 +491,22 @@ def fwhm_background(img: np.ndarray, mask: Optional[np.ndarray] = None,
     if manual:
         zones = select_manual_zones(img, num_zones)
         if not zones:
-            print("No zones selected.")
             return np.nan, []
 
         fwhm_values = []
         zone_stats = []
-        print("\n=== FWHM per Zone (background) ===")
         
         for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
             zone = img[ymin:ymax, xmin:xmax]
             fwhm = _fwhm_from_values(zone, bins=100)
             fwhm_values.append(fwhm)
             zone_stats.append({'zone': i, 'fwhm': fwhm, 'coords': (xmin, xmax, ymin, ymax)})
-            print(f"Zone {i}: FWHM = {fwhm:.4f}" if np.isfinite(fwhm) else f"Zone {i}: FWHM = nan")
 
         fwhm_mean = float(np.mean(fwhm_values))
-        print(f"Mean FWHM: {fwhm_mean:.4f}")
         return fwhm_mean, zone_stats
 
     values = img[mask] if mask is not None else img.ravel()
     fwhm_val = _fwhm_from_values(values, bins=100)
-    print(f"FWHM (background): {fwhm_val:.4f}" if np.isfinite(fwhm_val) else "FWHM (background): nan")
     return fwhm_val
 
 
@@ -360,27 +540,22 @@ def entropy_background(img: np.ndarray, mask: Optional[np.ndarray] = None,
     if manual:
         zones = select_manual_zones(img, num_zones)
         if not zones:
-            print("No zones selected.")
             return np.nan, []
 
         entropy_values = []
         zone_stats = []
-        print("\n=== Entropy per Zone (background) ===")
         
         for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
             zone = img[ymin:ymax, xmin:xmax]
             H = _shannon_entropy(zone, bins=bins, base=base)
             entropy_values.append(H)
             zone_stats.append({'zone': i, 'entropy': H, 'coords': (xmin, xmax, ymin, ymax)})
-            print(f"Zone {i}: Entropy = {H:.4f} bits" if np.isfinite(H) else f"Zone {i}: Entropy = nan")
 
         entropy_mean = float(np.mean(entropy_values))
-        print(f"Mean Entropy: {entropy_mean:.4f} bits")
         return entropy_mean, zone_stats
 
     values = img[mask] if mask is not None else img.ravel()
     H = _shannon_entropy(values, bins=bins, base=base)
-    print(f"Entropy (background): {H:.4f} bits" if np.isfinite(H) else "Entropy (background): nan")
     return H
 
 
@@ -424,46 +599,47 @@ def spatial_frequency(img: np.ndarray, mask: Optional[np.ndarray] = None,
         CF = np.sqrt(np.sum(dy**2) / denom_v) if denom_v > 0 else np.nan
 
     SF = np.sqrt(RF**2 + CF**2) if np.isfinite(RF) and np.isfinite(CF) else np.nan
-    print(f"SF whole background: {SF:.4f}")
     return (SF, RF, CF) if return_components else SF
 
 
 def legendre_background(complex_field, mask=None, manual=False, num_zones=2, 
-                       limit=64, order_max=10, NoPistonCompensation=True, UsePCA=False):
+                       limit=64, order_max=5, NoPistonCompensation=True, UsePCA=False, zones=None):
     """Calculate Legendre coefficients for background analysis."""
     if manual:
-        zones = select_manual_zones(
-            complex_field if not np.iscomplexobj(complex_field) else np.angle(complex_field), 
-            num_zones
-        )
+        # Use provided zones if available, otherwise select manually
+        if zones is None:
+            zones = select_manual_zones(
+                complex_field if not np.iscomplexobj(complex_field) else np.angle(complex_field), 
+                num_zones
+            )
+        
         if not zones:
-            print("No zones selected.")
-            return np.full(10, np.nan), []
+            return np.full(order_max, np.nan), []
 
         zone_stats = []
         all_coefficients = []
-        print("\n=== Legendre Coefficients per Zone ===")
         
         for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
             zone_field = complex_field[ymin:ymax, xmin:xmax]
             coeffs = _process_legendre_zone(zone_field, limit, order_max, UsePCA)
             all_coefficients.append(coeffs)
             zone_stats.append({'zone': i, 'legendre': coeffs, 'coords': (xmin, xmax, ymin, ymax)})
-            print(f"Zone {i}: Coefficients computed (shape: {coeffs.shape})")
 
         mean_coeffs = np.mean(all_coefficients, axis=0)
-        print(f"Mean Legendre Coefficients: {mean_coeffs}")
         return mean_coeffs, zone_stats
 
     coeffs = _process_legendre_zone(complex_field, limit, order_max, UsePCA)
 
     if not NoPistonCompensation:
         coeffs = _optimize_piston(complex_field, coeffs, limit, order_max, UsePCA)
-        gridSize = complex_field.shape[0]
-        coords = np.linspace(-1, 1 - 2 / gridSize, gridSize)
-        X_recon, Y_recon = np.meshgrid(coords, coords)
-        orders = np.arange(1, len(coeffs) + 1)
-        reconstruction_background(coeffs, X_recon, Y_recon, orders)
+    
+    gridSize = complex_field.shape[0]
+    coords = np.linspace(-1, 1 - 2 / gridSize, gridSize)
+    X_recon, Y_recon = np.meshgrid(coords, coords)
+    orders = np.arange(1, len(coeffs) + 1)
+    
+    
+    reconstruction_background(coeffs, X_recon, Y_recon, orders)
 
     return coeffs
 
@@ -498,7 +674,10 @@ def _process_legendre_zone(zone_field, limit, order_max, UsePCA):
     Legendres = Legendres / np.sqrt(np.diag(zProds))
     phaseVector = dominant.reshape(-1, 1)
     
-    return np.sum(Legendres * phaseVector, axis=0) * dA
+    # Projection onto Legendre basis
+    Legendre_Coefficients = np.sum(Legendres * phaseVector, axis=0) * dA
+    
+    return Legendre_Coefficients
 
 
 def _optimize_piston(complex_field, coeffs, limit, order_max, UsePCA):
@@ -524,6 +703,7 @@ def _optimize_piston(complex_field, coeffs, limit, order_max, UsePCA):
     Legendres = Legendres / np.sqrt(np.diag(zProds))
     Legendres_norm_const = np.sum(Legendres ** 2, axis=0) * dA
 
+    # Search for the optimal piston value
     values = np.arange(-np.pi, np.pi + np.pi / 6, np.pi / 6)
     variances = []
 
@@ -535,7 +715,10 @@ def _optimize_piston(complex_field, coeffs, limit, order_max, UsePCA):
         temp_holo = np.exp(1j * np.angle(square)) / np.exp(1j * wavefront.reshape(ny, nx))
         variances.append(np.var(np.angle(temp_holo)))
 
-    coeffs[0] = values[np.argmin(variances)]
+    # Update piston coefficient with best value
+    best = values[np.argmin(variances)]
+    coeffs[0] = best
+    
     return coeffs
 
 
@@ -582,23 +765,97 @@ def reconstruction_background(coefficients, X, Y, orders):
     ny, nx, n_terms = polynomials.shape
     coeffs_used = coefficients[:n_terms]
 
+    # Reconstruction background
     superficie = np.zeros((ny, nx))
     for i, coeff in enumerate(coeffs_used):
         superficie += coeff * polynomials[:, :, i]
 
-    plt.figure(figsize=(10, 4))
-    plt.subplot(1, 2, 1)
-    plt.imshow(superficie, cmap='viridis')
-    plt.title('Legendre-reconstructed background')
-    plt.colorbar()
+    # Create wx.App if needed
+    app_created = False
+    app = wx.GetApp()
+    if app is None:
+        app = wx.App(False)
+        app_created = True
 
-    plt.subplot(1, 2, 2)
-    plt.plot(coefficients, 'o-')
-    plt.title('Legendre coefficients')
-    plt.xlabel('Legendre Index')
-    plt.ylabel('Coefficient value')
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
+    # Create dialog
+    dlg = wx.Dialog(None, title="Legendre Reconstruction Results",
+                    style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
+                    size=(1100, 550))
+    dlg.Centre()
+    
+    main_sizer = wx.BoxSizer(wx.VERTICAL)
+    content_sizer = wx.BoxSizer(wx.HORIZONTAL)
+    
+    # Left panel: Surface
+    left_panel = wx.Panel(dlg)
+    left_sizer = wx.BoxSizer(wx.VERTICAL)
+    label_surface = wx.StaticText(left_panel, label="Legendre-reconstructed background")
+    left_sizer.Add(label_surface, 0, wx.ALIGN_CENTER | wx.ALL, 5)
+    
+    # Convert surface to colored image
+    from matplotlib import cm
+    viridis = cm.get_cmap('viridis')
+    surf_norm = (superficie - superficie.min()) / (superficie.max() - superficie.min())
+    colored = (viridis(surf_norm)[:, :, :3] * 255).astype(np.uint8)
+    
+    h, w = colored.shape[:2]
+    img_surface = wx.Image(w, h)
+    img_surface.SetData(colored.tobytes())
+    img_surface = img_surface.Scale(500, 400, wx.IMAGE_QUALITY_HIGH)
+    
+    bmp_surface = wx.StaticBitmap(left_panel, bitmap=wx.Bitmap(img_surface))
+    left_sizer.Add(bmp_surface, 1, wx.ALL | wx.EXPAND, 5)
+    left_panel.SetSizer(left_sizer)
+    content_sizer.Add(left_panel, 1, wx.EXPAND | wx.ALL, 5)
+    
+    # Right panel: Coefficients
+    right_panel = wx.Panel(dlg)
+    right_sizer = wx.BoxSizer(wx.VERTICAL)
+    label_coeff = wx.StaticText(right_panel, label="Legendre coefficients")
+    right_sizer.Add(label_coeff, 0, wx.ALIGN_CENTER | wx.ALL, 5)
+    
+    # Create plot
+    fig = plt.figure(figsize=(5, 4), dpi=100)
+    ax = fig.add_subplot(111)
+    ax.plot(coefficients, 'o-', linewidth=2, markersize=8)
+    ax.set_xlabel('Legendre Index')
+    ax.set_ylabel('Coefficient value')
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    
+    # Convert plot to bitmap
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    buf = canvas.buffer_rgba()
+    w_fig, h_fig = fig.canvas.get_width_height()
+    plot_array = np.frombuffer(buf, dtype=np.uint8).reshape(h_fig, w_fig, 4)[:, :, :3]
+    
+    img_plot = wx.Image(w_fig, h_fig)
+    img_plot.SetData(plot_array.tobytes())
+    img_plot = img_plot.Scale(500, 400, wx.IMAGE_QUALITY_HIGH)
+    
+    bmp_plot = wx.StaticBitmap(right_panel, bitmap=wx.Bitmap(img_plot))
+    right_sizer.Add(bmp_plot, 1, wx.ALL | wx.EXPAND, 5)
+    right_panel.SetSizer(right_sizer)
+    content_sizer.Add(right_panel, 1, wx.EXPAND | wx.ALL, 5)
+    
+    plt.close(fig)
+    
+    main_sizer.Add(content_sizer, 1, wx.EXPAND | wx.ALL, 10)
+    
+    # Close button
+    btn_close = wx.Button(dlg, wx.ID_CLOSE, "Close")
+    btn_close.Bind(wx.EVT_BUTTON, lambda evt: dlg.Close())
+    main_sizer.Add(btn_close, 0, wx.ALIGN_CENTER | wx.BOTTOM, 10)
+    
+    dlg.SetSizer(main_sizer)
+    dlg.ShowModal()
+    dlg.Destroy()
+
+    if app_created:
+        try:
+            app.Destroy()
+        except:
+            pass
 
     return superficie

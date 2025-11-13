@@ -3,6 +3,7 @@ import os
 import sys
 import platform
 import wx
+pythonPath = sys.executable
 
 # --- Path: Absolute path to the main script of your app ---
 current_dir = os.path.dirname(__file__)

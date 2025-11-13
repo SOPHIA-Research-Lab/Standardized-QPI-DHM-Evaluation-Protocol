@@ -27,6 +27,10 @@ class DetachedFrame(wx.Frame):
 
         self.update_bitmap()
 
+    def update_bitmap(self):
+        """Update bitmap with current scale."""
+        self._update_bitmap(self.bitmap_ctrl, self.pil_img, self.scale)
+
     def _update_bitmap(self, bitmap_ctrl, pil_img, scale):
         """Update bitmap control with specified zoom level or auto-fit to panel."""
         panel = bitmap_ctrl.Parent
@@ -49,7 +53,6 @@ class DetachedFrame(wx.Frame):
         bitmap = wx.Bitmap.FromBuffer(arr.shape[1], arr.shape[0], arr)
         bitmap_ctrl.SetBitmap(bitmap)
         panel.Layout()
-
 
     def on_zoom(self, event):
         """Handle mouse wheel zoom."""
@@ -88,7 +91,7 @@ class ImageNotebook(wx.aui.AuiNotebook):
         """Add image tab with optional complex data (amplitude, phase)."""
         panel = wx.Panel(self)
         panel.pil_img = pil_img
-        panel.scale_factor = 1.0  # Zoom del usuario (rueda del mouse)
+        panel.scale_factor = 1.0  # User zoom (mouse wheel)
 
         bitmap_ctrl = wx.StaticBitmap(panel)
         panel.bitmap_ctrl = bitmap_ctrl
@@ -97,15 +100,15 @@ class ImageNotebook(wx.aui.AuiNotebook):
         sizer.Add(bitmap_ctrl, 1, wx.EXPAND | wx.ALL, 5)
         panel.SetSizer(sizer)
 
-        # Ajustar automáticamente la imagen al tamaño del panel al crear la pestaña
+        # Adjust image to fit panel size when creating tab
         panel.Bind(wx.EVT_SIZE, lambda evt: self._update_bitmap(bitmap_ctrl, pil_img, panel.scale_factor))
         wx.CallAfter(self._update_bitmap, bitmap_ctrl, pil_img, panel.scale_factor)
 
-        # Permitir zoom con la rueda del mouse
+        # Allow zoom with mouse wheel
         panel.Bind(wx.EVT_MOUSEWHEEL, self.on_zoom)
         bitmap_ctrl.Bind(wx.EVT_MOUSEWHEEL, self.on_zoom)
 
-        # Guardar datos adicionales (amplitud, fase, etc.)
+        # Save additional data (amplitude, phase, etc.)
         if page_data:
             for key, value in page_data.items():
                 setattr(panel, key, value)
@@ -118,14 +121,13 @@ class ImageNotebook(wx.aui.AuiNotebook):
         self.SetSelection(self.GetPageCount() - 1)
         return panel
 
-
     def _update_bitmap(self, bitmap_ctrl, pil_img, scale):
         """Update bitmap control with specified zoom level or auto-fit to panel."""
         panel = bitmap_ctrl.Parent
         panel_size = panel.GetClientSize()
         img_w, img_h = pil_img.size
 
-        # Si el panel tiene tamaño válido, calcular ajuste automático
+        # If the panel has a valid size, calculate auto-fit
         if panel_size[0] > 0 and panel_size[1] > 0:
             auto_scale = min(panel_size[0] / img_w, panel_size[1] / img_h)
         else:
@@ -139,7 +141,6 @@ class ImageNotebook(wx.aui.AuiNotebook):
         bitmap = wx.Bitmap.FromBuffer(arr.shape[1], arr.shape[0], arr)
         bitmap_ctrl.SetBitmap(bitmap)
         panel.Layout()
-
 
     def on_zoom(self, event):
         """Handle mouse wheel zoom for specific panel."""
