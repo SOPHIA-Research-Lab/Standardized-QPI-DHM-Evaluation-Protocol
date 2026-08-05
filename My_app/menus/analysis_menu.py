@@ -11,11 +11,11 @@ def create(parent_frame, notebook):
     parent_frame.module3_metrics_id = wx.NewIdRef()
     parent_frame.computational_complexity_id = wx.NewIdRef()
     
-    analysis_menu.Append(parent_frame.module1_metrics_id, "Residual Background Phase Variance...")
-    analysis_menu.Append(parent_frame.module2_metrics_id, "Global Phase Distortion Metrics...")
-    analysis_menu.Append(parent_frame.module3_metrics_id, "Ground-Truth Comparisons...")
+    analysis_menu.Append(parent_frame.module1_metrics_id, "Background metrics...")
+    analysis_menu.Append(parent_frame.module2_metrics_id, "Global metrics...")
+    analysis_menu.Append(parent_frame.module3_metrics_id, "Ground-truth comparison...")
     analysis_menu.AppendSeparator()
-    analysis_menu.Append(parent_frame.computational_complexity_id, "Computational Complexity")
+    analysis_menu.Append(parent_frame.computational_complexity_id, "Computational complexity")
     
     # Bind events
     parent_frame.Bind(wx.EVT_MENU, lambda evt: _show_module1_dialog(parent_frame), id=parent_frame.module1_metrics_id)

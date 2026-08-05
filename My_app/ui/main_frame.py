@@ -45,9 +45,9 @@ class MainFrame(wx.Frame):
         self.metric_map = {
             # ===== MODULE 1: Residual Background Phase Variance =====
             # STD metrics
-            'std_unwrapped': (rb.std_background, 'STD_Unwrapped_Background', True),
-            'std_background': (rb.std_background, 'STD_Background', False),
-            'std_zones': (rb.std_background, 'STD_Zones', False),
+            'std_unwrapped': (rb.std_background, 'STD_Unwrapped_Background [rad]', True),
+            'std_background': (rb.std_background, 'STD_Background [rad]', False),
+            'std_zones': (rb.std_background, 'STD_Zones [rad]', False),
             
             # MAD metrics
             'mad_unwrapped': (rb.mean_absolute_deviation_background, 'MAD_Unwrapped_Background', True),
@@ -150,6 +150,7 @@ class MainFrame(wx.Frame):
         self.notebook.Bind(wx.aui.EVT_AUINOTEBOOK_PAGE_CHANGED, self.on_tab_change)
         self.notebook.Bind(wx.aui.EVT_AUINOTEBOOK_PAGE_CLOSE, self.on_tab_close)
         self.Bind(wx.EVT_CLOSE, self.on_close)
+        self.Bind(wx.EVT_BUTTON, self.on_save)
 
     def update_analysis_menu_state(self):
         # Update Analysis menu state based on current image type.
@@ -209,6 +210,8 @@ class MainFrame(wx.Frame):
         
         self.metric_table = wx.ListCtrl(self, style=wx.LC_REPORT)
         self.metric_table.InsertColumn(0, "Image Name", width=250)
+
+        self.metric_table.Bind(wx.EVT_CONTEXT_MENU, self.on_metric_table_context_menu)
         
         
         if self.GetSizer():
@@ -405,9 +408,9 @@ class MainFrame(wx.Frame):
         if self.notebook.GetPageCount() > initial_count:
             self.mark_as_sample_image(False)  
 
-    def on_save(self, event):
-        img = self.notebook.get_current_image()
-        file_manager.save_image(self, img)
+    #def on_save(self, event):
+        #img = self.notebook.get_current_image()
+        #file_manager.save_image(self, img)
 
     def _get_current_image_data(self):
         pil_img = self.notebook.get_current_image()
@@ -682,11 +685,12 @@ class MainFrame(wx.Frame):
     def on_metric_table_context_menu(self, event):
         # Show context menu for metrics table.
         menu = wx.Menu()
-        export_csv = menu.Append(wx.ID_ANY, "Export Metrics to CSV")
-        export_xls = menu.Append(wx.ID_ANY, "Export Metrics to Excel")
+        export_csv = menu.Append(wx.ID_ANY, "Export All Tables to CSV")
+        export_excel = menu.Append(wx.ID_ANY, "Export All Tables to Excel")
 
-        self.Bind(wx.EVT_MENU, self.on_export_metrics_csv, export_csv)
-        self.Bind(wx.EVT_MENU, self.on_export_metrics_excel, export_xls)
+        self.Bind(wx.EVT_MENU, self.on_export_all_csv, export_csv)
+        self.Bind(wx.EVT_MENU, self.on_export_all_excel, export_excel)
+
 
         self.PopupMenu(menu)
         menu.Destroy()
@@ -694,52 +698,151 @@ class MainFrame(wx.Frame):
     def on_mask_table_context_menu(self, event):
         # Show context menu for mask table.
         menu = wx.Menu()
-        export_csv = menu.Append(wx.ID_ANY, "Export Mask Data to CSV")
-        export_xls = menu.Append(wx.ID_ANY, "Export Mask Data to Excel")
+        #export_csv = menu.Append(wx.ID_ANY, "Export Mask Data to CSV")
+        #export_xls = menu.Append(wx.ID_ANY, "Export Mask Data to Excel")
 
-        self.Bind(wx.EVT_MENU, self.on_export_mask_csv, export_csv)
-        self.Bind(wx.EVT_MENU, self.on_export_mask_excel, export_xls)
+        #self.Bind(wx.EVT_MENU, self.on_export_mask_csv, export_csv)
+        #self.Bind(wx.EVT_MENU, self.export_all_tables, export_xls)
+        export_csv = menu.Append(wx.ID_ANY, "Export All Tables to CSV")
+        export_excel = menu.Append(wx.ID_ANY, "Export All Tables to Excel")
+
+        self.Bind(wx.EVT_MENU, self.on_export_all_csv, export_csv)
+        self.Bind(wx.EVT_MENU, self.on_export_all_excel, export_excel)
 
         self.PopupMenu(menu)
         menu.Destroy()
 
-    def _export_table_data(self, table_type, file_format):
-        # Generic method to export table data.
-        table_info = {
-            "metrics": (self.metric_table, self._get_metric_table_data, "Metrics"),
-            "mask": (self.mask_table, self._get_mask_table_data, "Mask Data")
-        }
-        
-        table, data_method, file_desc = table_info[table_type]
+    def export_all_tables(self, file_format, event=None):
+        """Export all tables that contain data."""
 
-        if table is None or table.GetItemCount() == 0:
-            wx.MessageBox(f"No {file_desc.lower()} to export", "Error", wx.ICON_ERROR)
+        table_info = {
+            "Metrics": (self.metric_table, self._get_metric_table_data),
+            "Mask Data": (self.mask_table, self._get_mask_table_data),
+            #"Legendre": (self.legendre_table, self._get_legendre_data),
+            #"Background": (self.background_table, self._get_background_data),
+        }
+
+        # Check if there is at least one table with data
+        has_data = any(
+            table is not None and table.GetItemCount() > 0
+            for table, _ in table_info.values()
+        )
+
+        if not has_data:
+            wx.MessageBox(
+                "No tables with data to export.",
+                "Error",
+                wx.OK | wx.ICON_ERROR
+            )
             return
 
-        wildcard = "CSV files (*.csv)|*.csv" if file_format == "csv" else "Excel files (*.xlsx)|*.xlsx"
-
-        with wx.FileDialog(
-            self, 
-            f"Save {file_desc} {file_format.upper()} file",
-            wildcard=wildcard,
-            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
-        ) as dlg:
-            if dlg.ShowModal() == wx.ID_CANCEL:
-                return
-            path = dlg.GetPath()
-
         try:
-            data = data_method()
-            df = pd.DataFrame(data)
-            
-            if file_format == "csv":
-                df.to_csv(path, index=False)
-            else:
-                df.to_excel(path, index=False)
-                
-            wx.MessageBox(f"{file_desc} exported to {path}", "Success", wx.ICON_INFORMATION)
+
+            # =====================================================
+            # EXPORT TO EXCEL (one workbook, multiple sheets)
+            # =====================================================
+            if file_format.lower() == "excel":
+
+                with wx.FileDialog(
+                    self,
+                    "Save Excel file",
+                    wildcard="Excel files (*.xlsx)|*.xlsx",
+                    style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+                ) as dlg:
+
+                    if dlg.ShowModal() == wx.ID_CANCEL:
+                        return
+
+                    path = dlg.GetPath()
+
+                exported = 0
+
+                with pd.ExcelWriter(path, engine="openpyxl") as writer:
+
+                    for sheet_name, (table, data_method) in table_info.items():
+
+                        if table is None or table.GetItemCount() == 0:
+                            continue
+
+                        data = data_method()
+
+                        if not data:
+                            continue
+
+                        df = pd.DataFrame(data)
+
+                        df.to_excel(
+                            writer,
+                            sheet_name=sheet_name[:31],   # Excel sheet name limit
+                            index=False
+                        )
+
+                        exported += 1
+
+                wx.MessageBox(
+                    f"{exported} table(s) exported successfully.",
+                    "Success",
+                    wx.OK | wx.ICON_INFORMATION
+                )
+
+            # =====================================================
+            # EXPORT TO CSV (one CSV file per table)
+            # =====================================================
+            elif file_format.lower() == "csv":
+
+                with wx.DirDialog(
+                    self,
+                    "Select folder to save CSV files",
+                    style=wx.DD_DEFAULT_STYLE | wx.DD_DIR_MUST_EXIST,
+                ) as dlg:
+
+                    if dlg.ShowModal() == wx.ID_CANCEL:
+                        return
+
+                    folder = dlg.GetPath()
+
+                exported = 0
+
+                for file_name, (table, data_method) in table_info.items():
+
+                    if table is None or table.GetItemCount() == 0:
+                        continue
+
+                    data = data_method()
+
+                    if not data:
+                        continue
+
+                    df = pd.DataFrame(data)
+
+                    csv_path = os.path.join(
+                        folder,
+                        f"{file_name}.csv"
+                    )
+
+                    df.to_csv(csv_path, index=False)
+
+                    exported += 1
+
+                wx.MessageBox(
+                    f"{exported} CSV file(s) exported successfully.",
+                    "Success",
+                    wx.OK | wx.ICON_INFORMATION
+                )
+
         except Exception as e:
-            wx.MessageBox(f"Export failed: {str(e)}", "Error", wx.ICON_ERROR)
+
+            wx.MessageBox(
+                f"Export failed:\n{str(e)}",
+                "Error",
+                wx.OK | wx.ICON_ERROR
+            )
+
+    def on_export_all_excel(self, event):
+        self.export_all_tables("excel")
+
+    def on_export_all_csv(self, event):
+        self.export_all_tables("csv")
 
     def on_export_metrics_csv(self, event):
         self._export_table_data("metrics", "csv")
@@ -1070,9 +1173,36 @@ class MainFrame(wx.Frame):
         except Exception as e:
             wx.MessageBox(f"Error: {str(e)}", "Error", wx.ICON_ERROR)
 
+    def on_save(self, event):
+    
+                table_info = {
+                    "Metrics": self.metric_table,
+                    "Mask Data": self.mask_table,
+                    #"Legendre": self.legendre_table,
+                    #"Background": self.background_table,
+                }
+    
+                # ¿Existe alguna tabla con datos?
+                has_data = any(
+                    table is not None and table.GetItemCount() > 0
+                    for table in table_info.values()
+                )
+    
+                if not has_data:
+                    wx.MessageBox(
+                        "There are no results to save.",
+                        "No Data",
+                        wx.OK | wx.ICON_INFORMATION
+                    )
+                    return
+    
+                # Si hay datos, exportar todo
+                self.export_all_tables("excel")    
+
     def on_close(self, event):
         self.Destroy()
 
+    
     def on_exit(self, event):
         self.Close()
 
@@ -1453,7 +1583,7 @@ class MainFrame(wx.Frame):
             unwrap_dlg = wx.MessageDialog(
                 self,
                 "Do you want to apply 'unwrap' (phase unwrapping) to images before zone analysis?\n\n"
-                "Unwrapping helps remove 2π phase discontinuities.",
+                "Unwrapping helps remove 2π phase discontinuities but could jeopardize phase compensation.\n\n",
                 "Apply Phase Unwrapping for Zones",
                 style=wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION
             )
@@ -1473,6 +1603,7 @@ class MainFrame(wx.Frame):
             needs_wrapped = any('unwrapped' not in mid and 'zones' not in mid for mid in module1_metrics)
             
             if needs_wrapped:
+                
                 background_mask, threshold = utRBPV.create_background_mask(
                     sample, method='otsu', parent=self
                 )
@@ -1482,7 +1613,18 @@ class MainFrame(wx.Frame):
                 )
             
             if needs_unwrapped:
+                unwrap_dlg = wx.MessageDialog(
+                    self,
+                    "Unwrapping helps remove 2π phase discontinuities but could jeopardize phase compensation.",
+                    "Apply Phase Unwrapping for Zones",
+                    wx.OK | wx.ICON_QUESTION
+                )
+
+                unwrap_response = unwrap_dlg.ShowModal()
+                unwrap_dlg.Destroy()
+
                 try:
+                    
                     unwrapped_sample = rb.unwrap_with_scikit(sample)
                     background_mask, threshold = utRBPV.create_background_mask(
                         unwrapped_sample, method='otsu', parent=self

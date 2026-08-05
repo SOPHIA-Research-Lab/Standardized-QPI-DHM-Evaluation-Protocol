@@ -138,6 +138,22 @@ class WxThresholdDialog(wx.Dialog):
 
         self._build_ui()
         self._update_previews()
+        wx.CallAfter(self._show_welcome_message)
+
+    def _show_welcome_message(self):
+        dlg = wx.MessageDialog(
+            self,
+            "Welcome to the Threshold Selector.\n\n"
+            "Instructions:\n"
+            "Now adjust the binarization threshold that accurately \n" \
+            "discriminates between background and sample regions.\n\n"
+            "Verify the Binary Preview, Sample Mask and Background Mask.\n"
+            "Press OK to continue.",
+            "Threshold Selection",
+            wx.OK | wx.ICON_INFORMATION
+        )
+        dlg.ShowModal()
+        dlg.Destroy()
 
     def _build_ui(self):
         main_sizer = wx.BoxSizer(wx.VERTICAL)

@@ -342,6 +342,7 @@ def unwrap_with_scikit(wrapped_phase: np.ndarray) -> np.ndarray:
     return unwrap_phase(wrapped_phase)
 
 
+
 def std_background(img: np.ndarray, mask: Optional[np.ndarray] = None, 
                    manual: bool = False, num_zones: int = 2):
     """Calculate standard deviation of background."""
@@ -397,6 +398,7 @@ def mean_absolute_deviation_background(img: np.ndarray, mask: Optional[np.ndarra
 def rms_background(img: np.ndarray, mask: Optional[np.ndarray] = None,
                    manual: bool = False, num_zones: int = 3):
     """Calculate Root Mean Square (RMS) of background."""
+
     if manual:
         zones = select_manual_zones(img, num_zones)
         if not zones:
@@ -404,18 +406,28 @@ def rms_background(img: np.ndarray, mask: Optional[np.ndarray] = None,
 
         zone_stats = []
         rms_values = []
-        
+
         for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
             zone_img = img[ymin:ymax, xmin:xmax]
-            zone_rms = float(np.sqrt(np.mean((zone_img - np.mean(zone_img)) ** 2)))
+
+            # RMS = sqrt(mean(x^2))
+            zone_rms = float(np.sqrt(np.mean(zone_img ** 2)))
+
             rms_values.append(zone_rms)
-            zone_stats.append({'zone': i, 'rms': zone_rms, 'coords': (xmin, xmax, ymin, ymax)})
+            zone_stats.append({
+                'zone': i,
+                'rms': zone_rms,
+                'coords': (xmin, xmax, ymin, ymax)
+            })
 
         rms_mean = float(np.mean(rms_values))
         return rms_mean, zone_stats
 
     values = img[mask] if mask is not None else img.flatten()
-    rms_val = float(np.sqrt(np.mean((values - np.mean(values)) ** 2)))
+
+    # RMS = sqrt(mean(x^2))
+    rms_val = float(np.sqrt(np.mean(values ** 2)))
+
     return rms_val
 
 
