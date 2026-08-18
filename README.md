@@ -7,8 +7,8 @@ This repository provides a **standardized protocol** for Quantitative Phase Imag
 
 The protocol is organized into **four evaluation cores**:  
 
-1. Residual Background Phase Variance  
-2. Global Phase Distortion Metrics  
+1. Background Metrics
+2. Global Metrics  
 3. Ground-Truth Comparisons  
 4. Computational Complexity  
 
