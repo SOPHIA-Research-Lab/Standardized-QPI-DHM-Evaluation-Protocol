@@ -83,7 +83,8 @@ xxxxxxxxxxxxxxxxxxxxxxxx xxxxxxxxxxxxxxxxxxxxxxxxxxx
 ## Getting Started  
 
 ### Requirements  
-- Python wxPython>=4.2.0
+- Python
+wxPython>=4.2.0
 numpy>=1.24.0
 Pillow>=10.0.0
 pandas>=2.0.0
