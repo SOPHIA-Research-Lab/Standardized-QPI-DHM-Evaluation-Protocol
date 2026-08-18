@@ -83,7 +83,19 @@ xxxxxxxxxxxxxxxxxxxxxxxx xxxxxxxxxxxxxxxxxxxxxxxxxxx
 ## Getting Started  
 
 ### Requirements  
-- Python xxxxxxxxxxxxxxxx 
+- Python wxPython>=4.2.0
+numpy>=1.24.0
+Pillow>=10.0.0
+pandas>=2.0.0
+scikit-image>=0.21.0
+scipy>=1.10.0
+matplotlib>=3.7.0
+scikit-learn>=1.3.0
+openpyxl>=3.1.0
+scipy>=1.10.0
+scikit-image>=0.21.0
+scikit-learn>=1.3.0
+opencv-python>=4.8.0
 
 
 pip install -r requirements.txt
