@@ -170,16 +170,7 @@ def maximum_minus_minimum(phase: np.ndarray, use_unwrap: bool = False):
     """
     Calculates the Maximum - Minimum difference of a phase image.
 
-    Parameters
-    ----------
-    phase : ndarray (real)
-        Phase image in radians.
-    use_unwrap : bool
-        If True, applies unwrapping before the calculation.
-
-    Returns
-    -------
-    max_minus_min : float
+  
         Difference between the maximum and the minimum of the phase.
     """
     if use_unwrap:
