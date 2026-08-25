@@ -9,16 +9,11 @@ from core.file_manager import process_complex_field
 
 
 
-# ============================================
-# 🔍 Buscar archivo dentro de Samples
-# ============================================
+
 def find_sample_file(subfolder, filename):
-    """
-    Busca un archivo dentro de ./Samples/<subfolder>/<filename>
-    sin depender de rutas absolutas.
-    """
+
     base_dir = os.path.dirname(os.path.dirname(__file__))  # raíz de My_app
-    samples_dir = os.path.join(base_dir, "Samples", subfolder)
+    samples_dir = os.path.join(base_dir, "Samples Hologram", subfolder)
     file_path = os.path.join(samples_dir, filename)
 
     if not os.path.exists(file_path):
@@ -30,47 +25,61 @@ def find_sample_file(subfolder, filename):
 
 
 # ============================================
-# 🔍 Crear menú de Samples
+#  Sample Menu Creation
 # ============================================
 def create(parent_frame, notebook=None):
     samples_menu = wx.Menu()
 
-    # ===== Submenús =====
-    usaf_submenu = wx.Menu()
-    star_submenu = wx.Menu()
+    # ===== Submenus =====
+    NTelecentric_submenu = wx.Menu()
+    Telecentric_submenu = wx.Menu()
 
     parent_frame.usaf_150nm_mat_id = wx.NewIdRef()
     parent_frame.usaf_150nm_img_id = wx.NewIdRef()
     parent_frame.star_150nm_mat_id = wx.NewIdRef()
     parent_frame.star_150nm_img_id = wx.NewIdRef()
+    parent_frame.Nstar_mat_id = wx.NewIdRef()
+    parent_frame.probiotics_mat_id = wx.NewIdRef()
 
-    usaf_submenu.Append(parent_frame.usaf_150nm_mat_id, "USAF - 150 nm (.mat)")
-    usaf_submenu.Append(parent_frame.usaf_150nm_img_id, "USAF - 150 nm (image)")
-    star_submenu.Append(parent_frame.star_150nm_mat_id, "Star - 150 nm (.mat)")
-    star_submenu.Append(parent_frame.star_150nm_img_id, "Star - 150 nm (image)")
+    #Telecentric_submenu.Append(parent_frame.usaf_150nm_mat_id, "USAF - 150 nm (.mat)")
+    Telecentric_submenu.Append(parent_frame.usaf_150nm_img_id, "USAF (.bmp)")
+    #Telecentric_submenu.Append(parent_frame.star_150nm_mat_id, "Star - 150 nm (.mat)")
+    Telecentric_submenu.Append(parent_frame.star_150nm_img_id, "Star (.bmp)")
+    NTelecentric_submenu.Append(parent_frame.Nstar_mat_id, "No telecentric Star (.tiff)")
+    NTelecentric_submenu.Append(parent_frame.Nstar_mat_id, "Red blood cells (.tiff)")
+    Telecentric_submenu.Append(parent_frame.probiotics_mat_id, "Probiotics (.bmp)")
 
-    samples_menu.AppendSubMenu(usaf_submenu, "USAF Target")
-    samples_menu.AppendSubMenu(star_submenu, "Star Target")
+    samples_menu.AppendSubMenu(Telecentric_submenu, "Telecentric")
+    samples_menu.AppendSubMenu(NTelecentric_submenu, "No Telecentric")
+   
 
-    # ===== Enlazar eventos =====
+    # ===== Events =====
+    # parent_frame.Bind(wx.EVT_MENU,
+    #                   lambda evt: load_sample(parent_frame, notebook, "Telecentric", "usaf_150nm.mat", "USAF 150nm (.mat)"),
+    #                   id=parent_frame.usaf_150nm_mat_id)
     parent_frame.Bind(wx.EVT_MENU,
-                      lambda evt: load_sample(parent_frame, notebook, "usaf", "usaf_150nm.mat", "USAF 150nm (.mat)"),
-                      id=parent_frame.usaf_150nm_mat_id)
-    parent_frame.Bind(wx.EVT_MENU,
-                      lambda evt: load_sample(parent_frame, notebook, "usaf", "usaf_150nm.png", "USAF 150nm (image)"),
+                      lambda evt: load_sample(parent_frame, notebook, "Telecentric", "T_Usaf_20x_632_3.75.bmp", "USAF (.bmp)"),
                       id=parent_frame.usaf_150nm_img_id)
+    # parent_frame.Bind(wx.EVT_MENU,
+    #                   lambda evt: load_sample(parent_frame, notebook, "Telecentric", "star_150nm.mat", "Star 150nm (.mat)"),                      
+    #                   id=parent_frame.star_150nm_mat_id)
     parent_frame.Bind(wx.EVT_MENU,
-                      lambda evt: load_sample(parent_frame, notebook, "star", "star_150nm.mat", "Star 150nm (.mat)"),
-                      id=parent_frame.star_150nm_mat_id)
-    parent_frame.Bind(wx.EVT_MENU,
-                      lambda evt: load_sample(parent_frame, notebook, "star", "star_150nm.png", "Star 150nm (image)"),
+                      lambda evt: load_sample(parent_frame, notebook, "Telecentric", "T_Star_10x_632_3.75.bmp", "Star (.bmp)"),
                       id=parent_frame.star_150nm_img_id)
-
+    parent_frame.Bind(wx.EVT_MENU,
+                      lambda evt: load_sample(parent_frame, notebook, "No Telecentric", "N_Star_20x_532_5.86_-4cm.tiff", "No telecentric Star target (.tiff)"),
+                      id=parent_frame.Nstar_mat_id)
+    parent_frame.Bind(wx.EVT_MENU,
+                          lambda evt: load_sample(parent_frame, notebook, "No Telecentric", "NredBlood_40x_632_4.65_30mm.tiff", "Red Blood Cells (.tiff)"),
+                          id=parent_frame.Nstar_mat_id)
+    parent_frame.Bind(wx.EVT_MENU,
+                          lambda evt: load_sample(parent_frame, notebook, "Telecentric", "T_Probiotics_20x_632_3.75.bmp", "Probiotics (.bmp)"),
+                          id=parent_frame.probiotics_mat_id)
     return samples_menu
 
 
 # ============================================
-# 📂 Cargar una muestra (usando process_complex_field)
+# Load Sample
 # ============================================
 def load_sample(parent_frame, notebook, subfolder, filename, display_name):
     try:
@@ -83,7 +92,7 @@ def load_sample(parent_frame, notebook, subfolder, filename, display_name):
 
     try:
         # --------------------------
-        # 📊 Caso 1: archivo .mat
+        #  Case 1: archivo .mat
         # --------------------------
         if ext == ".mat":
             mat_data = loadmat(file_path)
@@ -93,10 +102,10 @@ def load_sample(parent_frame, notebook, subfolder, filename, display_name):
                 wx.MessageBox(f"No valid data found in {filename}", "Error", wx.ICON_ERROR)
                 return
 
-            # Tomamos el primer campo válido
+            # Take the first valid key
             data = mat_data[data_keys[0]]
 
-            # Si es complejo, usar tal cual; si no, convertir a complejo con fase artificial
+            # Evaluate if the data is complex or needs to be converted
             if np.iscomplexobj(data):
                 complex_field = data
             else:
@@ -104,26 +113,26 @@ def load_sample(parent_frame, notebook, subfolder, filename, display_name):
                 phase = utRBPV.grayscaleToPhase(amplitude)
                 complex_field = amplitude * np.exp(1j * phase)
 
-            # ✅ Usar tu función reutilizable
+            # Call your function to process the complex field
             process_complex_field(notebook, complex_field, filename, data_keys[0])
 
         # --------------------------
-        # 📷 Caso 2: imagen normal
+        # Case 2: file (png, jpg, jpeg, bmp)
         # --------------------------
-        elif ext in [".png", ".jpg", ".jpeg", ".bmp"]:
+        elif ext in [".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif"]:
             img = Image.open(file_path).convert("L")
             img_array = np.array(img, dtype=float)
             phase = utRBPV.grayscaleToPhase(img_array)
             complex_field = img_array * np.exp(1j * phase)
 
-            # ✅ Llamar también a tu función
+            # Call your function to process the complex field
             process_complex_field(notebook, complex_field, filename, "Grayscale Image")
 
         else:
             wx.MessageBox(f"Unsupported file format: {ext}", "Error", wx.ICON_ERROR)
             return
 
-        # 🔒 Marcar como imagen de muestra
+
         parent_frame.mark_as_sample_image(True)
 
     except Exception as e:

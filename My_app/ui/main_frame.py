@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 import pandas as pd
 from core import file_manager
-from menus import file_menu, edit_menu, analysis_menu, help_menu, samples_menu
+from menus import file_menu,samples_menu, analysis_menu, help_menu
 from detached_notebook import ImageNotebook
 from analysis.module1 import utilitiesRBPV as utRBPV
 from analysis.module1 import residual_background as rb
@@ -133,7 +133,7 @@ class MainFrame(wx.Frame):
         # Set up the menu bar.
         menubar = wx.MenuBar()
         menubar.Append(file_menu.create(self, self.notebook), "&File")
-        menubar.Append(edit_menu.create(self, self.notebook), "&Edit")
+        menubar.Append(samples_menu.create(self, self.notebook), "&Samples")
         menubar.Append(analysis_menu.create(self, self.notebook), "&Analysis")
         menubar.Append(help_menu.create(self), "&Help")
         self.SetMenuBar(menubar)
