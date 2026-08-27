@@ -7,12 +7,8 @@ from skimage.restoration import unwrap_phase
 from numpy.fft import fft2, ifft2, fftshift, ifftshift
 from scipy.sparse.linalg import svds
 import cv2
-from typing import List, Tuple
 import wx
 from matplotlib.backends.backend_agg import FigureCanvasAgg
-
-
-
 
 class ManualRectangleSelector:
     """Interactive rectangle selector using wxPython (replaces matplotlib version)."""

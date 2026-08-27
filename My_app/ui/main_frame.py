@@ -129,14 +129,84 @@ class MainFrame(wx.Frame):
             'psnr_unwrapped': (gtc.calculate_psnr, 'PSNR_Unwrapped', True),
         }
 
+    def on_check_imagej_updates(self, event):
+        """Periodically checks if the user edited any image inside ImageJ."""
+        from core.imagej_bridge import check_for_imagej_updates
+        
+        try:
+            cambios = check_for_imagej_updates()
+        except Exception:
+            return  # ImageJ podría no estar iniciado todavía; ignoramos silenciosamente
+        
+        for titulo, pil_img in cambios:
+            if titulo in self.imagej_tab_map:
+                # Ya existe una pestaña vinculada a esta imagen: la actualizamos
+                idx = self.imagej_tab_map[titulo]
+                if idx < self.notebook.GetPageCount():
+                    panel = self.notebook.GetPage(idx)
+                    panel.pil_img = pil_img
+                    self.notebook._update_bitmap(panel.bitmap_ctrl, pil_img, panel.scale_factor)
+                    continue
+            
+            # No existe todavía: creamos una pestaña nueva y la registramos
+            panel = self.notebook.add_image_tab(pil_img, f"{titulo}_ImageJ")
+            self.imagej_tab_map[titulo] = self.notebook.GetPageCount() - 1
+
+
+
     def _setup_menus(self):
         # Set up the menu bar.
         menubar = wx.MenuBar()
         menubar.Append(file_menu.create(self, self.notebook), "&File")
         menubar.Append(samples_menu.create(self, self.notebook), "&Samples")
         menubar.Append(analysis_menu.create(self, self.notebook), "&Analysis")
+        menubar.Append(self._create_imagej_menu(), "&ImageJ")
         menubar.Append(help_menu.create(self), "&Help")
         self.SetMenuBar(menubar)
+
+        self.imagej_tab_map = {}  # Relaciona título de ImageJ -> índice de pestaña en tu notebook
+
+        self.imagej_timer = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self.on_check_imagej_updates, self.imagej_timer)
+        self.imagej_timer.Start(1500)  # Revisa cada 1.5 segundos
+
+    def _create_imagej_menu(self):
+        """Create the ImageJ integration menu."""
+        menu = wx.Menu()
+        
+        send_item = menu.Append(wx.ID_ANY, "Send current image to ImageJ")
+        self.Bind(wx.EVT_MENU, self.on_send_to_imagej, send_item)
+        
+        return menu
+
+    def on_send_to_imagej(self, event):
+        """Send the currently selected image to ImageJ for editing."""
+        from core.imagej_bridge import show_imagej_gui, pil_to_imageplus
+        
+        pil_img, name, page = self._get_current_image_data()
+        if pil_img is None:
+            return
+        
+        show_imagej_gui()
+        pil_to_imageplus(pil_img, title=name)
+        
+        # Creamos la pestaña vinculada DESDE AHORA, para que el timer solo la actualice
+        nuevo_panel = self.notebook.add_image_tab(pil_img, f"{name}_ImageJ")
+        self.imagej_tab_map[name] = self.notebook.GetPageCount() - 1
+
+    # def on_get_from_imagej(self, event):
+    #     """Retrieve the currently active image from ImageJ and add it as a new tab."""
+    #     from core.imagej_bridge import get_current_imagej_image_as_pil
+        
+    #     pil_resultado, titulo = get_current_imagej_image_as_pil()
+        
+    #     if pil_resultado is None:
+    #         wx.MessageBox("No active image found in ImageJ.", "Info", wx.ICON_INFORMATION)
+    #         return
+        
+    #     nuevo_nombre = f"{titulo}_from_ImageJ"
+    #     self.notebook.add_image_tab(pil_resultado, nuevo_nombre)
+    #     self.mark_as_sample_image(False)
 
     def _setup_layout(self):
         # Set up the main layout.

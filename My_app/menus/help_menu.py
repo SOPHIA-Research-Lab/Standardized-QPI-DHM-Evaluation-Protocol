@@ -81,7 +81,7 @@ def show_help(parent):
         "   2. Run the app:\n"
         "      python app.py\n\n"
 
-        "Thank you for using the QPI Evaluation App! ✨"
+        "Thank you for using the QPI Evaluation App!"
     )
 
     dialog = wx.Dialog(parent, title="Help", size=(650, 520))
