@@ -36,7 +36,7 @@ def show_help(parent):
         "high PV indicates greater distortion or optical noise.\n"
         "   -  Global Phase Gradient: Values close to zero imply uniform background (good optical quality). "
         "High values indicate clear slope, reflecting severity of artifacts or optical aberrations.\n"
-        "   -  TSM (Tenengrad Sharpness Metric): Low TSM values indicate flat and stable phase image "
+        "   -  Thresholding-and-Summation Metric (TSM): Low TSM values indicate flat and stable phase image "
         "(desirable, artifact-free background). High TSM reflects many abrupt changes or inclinations.\n"
         "   -  Laplacian Energy: Low values represent smooth homogeneous background (few details, defocused image). "
         "High values indicate many edges, sharp details and marked texture (may represent noise if background should be uniform).\n"

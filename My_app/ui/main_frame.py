@@ -45,74 +45,79 @@ class MainFrame(wx.Frame):
         self.metric_map = {
             # ===== MODULE 1: Residual Background Phase Variance =====
             # STD metrics
-            'std_unwrapped': (rb.std_background, 'STD_Unwrapped_Background [rad]', True),
-            'std_background': (rb.std_background, 'STD_Background [rad]', False),
+            'std_unwrapped': (rb.std_background, 'STD_U_B [rad]', True),
+            'std_background': (rb.std_background, 'STD_B [rad]', False),
             'std_zones': (rb.std_background, 'STD_Zones [rad]', False),
             
             # MAD metrics
-            'mad_unwrapped': (rb.mean_absolute_deviation_background, 'MAD_Unwrapped_Background', True),
-            'mad_background': (rb.mean_absolute_deviation_background, 'MAD_Background', False),
-            'mad_zones': (rb.mean_absolute_deviation_background, 'MAD_Zones', False),
+            'mad_unwrapped': (rb.mean_absolute_deviation_background, 'MAD_U_B [rad]', True),
+            'mad_background': (rb.mean_absolute_deviation_background, 'MAD_B [rad]', False),
+            'mad_zones': (rb.mean_absolute_deviation_background, 'MAD_Zones [rad]', False),
             
             # RMS metrics
-            'rms_unwrapped': (rb.rms_background, 'RMS_Unwrapped_Background', True),
-            'rms_background': (rb.rms_background, 'RMS_Background', False),
-            'rms_zones': (rb.rms_background, 'RMS_Zones', False),
+            'rms_unwrapped': (rb.rms_background, 'RMS_U_B [rad]', True),
+            'rms_background': (rb.rms_background, 'RMS_B [rad]', False),
+            'rms_zones': (rb.rms_background, 'RMS_Zones [rad]', False),
             
             # PV metrics
-            'pv_unwrapped': (rb.pv_background, 'PV_Unwrapped_Background', True),
-            'pv_background': (rb.pv_background, 'PV_Background', False),
-            'pv_zones': (rb.pv_background, 'PV_Zones', False),
+            'pv_unwrapped': (rb.pv_background, 'PV_U_B [rad]', True),
+            'pv_background': (rb.pv_background, 'PV_B [rad]', False),
+            'pv_zones': (rb.pv_background, 'PV_Zones [rad]', False),
             
             # FWHM metrics
-            'fwhm_unwrapped': (rb.fwhm_background, 'FWHM_Unwrapped_Background', True),
-            'fwhm_background': (rb.fwhm_background, 'FWHM_Background', False),
-            'fwhm_zones': (rb.fwhm_background, 'FWHM_Zones', False),
+            'fwhm_unwrapped': (rb.fwhm_background, 'FWHM_U_B [rad]', True),
+            'fwhm_background': (rb.fwhm_background, 'FWHM_B [rad]', False),
+            'fwhm_zones': (rb.fwhm_background, 'FWHM_Zones [rad]', False),
             
             # Entropy metrics
-            'entropy_unwrapped': (rb.entropy_background, 'Entropy_Unwrapped_Background', True),
-            'entropy_background': (rb.entropy_background, 'Entropy_Background', False),
-            'entropy_zones': (rb.entropy_background, 'Entropy_Zones', False),
+            'entropy_unwrapped': (rb.entropy_background, 'Entropy_U_B [bits]', True),
+            'entropy_background': (rb.entropy_background, 'Entropy_B [bits]', False),
+            'entropy_zones': (rb.entropy_background, 'Entropy_Zones [bits]', False),
             
             # Legendre metrics 
-            'legendre_background': (rb.legendre_background, 'Legendre-Background', False),
-            'legendre_unwrapped': (rb.legendre_background, 'Legendre-UnwrappedBackground', True),
-            'legendre_zones': (rb.legendre_background, 'Legendre_Zones', False),
+            'legendre_background': (rb.legendre_background, 'Legendre-B [rad]', False),
+            'legendre_unwrapped': (rb.legendre_background, 'Legendre-U_B [rad]', True),
+            'legendre_zones': (rb.legendre_background, 'Legendre_Zones [rad]', False),
 
             
             # ===== MODULE 2: Global Phase Distortion Metrics =====
             
-            # Maximum-Minus-Minimum
-            'mmm_global': (gp.maximum_minus_minimum, 'MMM_Global', False),
-            'mmm_unwrapped': (gp.maximum_minus_minimum, 'MMM_Unwrapped', True),
+            #  PV metrics
+            'mmm_global': (gp.maximum_minus_minimum, 'PV_Global [rad]', False),
+            'mmm_unwrapped': (gp.maximum_minus_minimum, 'PV_Global_U [rad]', True),
             
             # Phase Gradient
-            'gradient_global': (gp.global_phase_gradient, 'Gradient_Global', False),
-            'gradient_unwrapped': (gp.global_phase_gradient, 'Gradient_Unwrapped', True),
+            'gradient_global': (gp.phase_gradient_prewitt, 'Gradient_Global [rad/px]', False),
+            'gradient_unwrapped': (gp.phase_gradient_prewitt, 'Gradient_Unwrapped [rad/px]', True),
             
             # TSM
-            'tsm_global': (gp.tsm_global, 'TSM_Global', False),
-            'tsm_unwrapped': (gp.tsm_global, 'TSM_Unwrapped', True),
+            'tsm_global': (gp.tsm_global, 'TSM_Global [%]', False),
+            'tsm_unwrapped': (gp.tsm_global, 'TSM_Unwrapped [%]', True),
             
-            # Phase Curvature
-            'curvature_global': (gp.reconstruction_background, 'Curvature_Global', False),
-            'curvature_unwrapped': (gp.reconstruction_background, 'Curvature_Unwrapped', True),
+            # # Phase Curvature
+            # 'curvature_global': (gp.reconstruction_background, 'Curvature_Global', False),
+            # 'curvature_unwrapped': (gp.reconstruction_background, 'Curvature_Unwrapped', True),
             
             # Laplacian Energy
-            'laplacian_global': (gp.laplacian_energy, 'Laplacian_Global', False),
-            'laplacian_unwrapped': (gp.laplacian_energy, 'Laplacian_Unwrapped', True),
+            'laplacian_global': (gp.laplacian_energy, 'GPG_Global [rad/px]^2', False),
+            'laplacian_unwrapped': (gp.laplacian_energy, 'GPG_Unwrapped [rad/px]^2', True),
             
             # Spatial Frequency
-            'spatial_freq_global': (gp.spatial_frequency_global, 'Spatial_Frequency_Global', False),
-            'spatial_freq_unwrapped': (gp.spatial_frequency_global, 'Spatial_Frequency_Unwrapped', True),
+            'spatial_freq_global': (gp.spatial_frequency_global, 'SF_Global [rad]', False),
+            'spatial_freq_unwrapped': (gp.spatial_frequency_global, 'SF_Unwrapped [rad]', True),
             
             # Global Entropy
-            'global_entropy': (gp.global_entropy_global, 'Global_Entropy', False),
-            'global_entropy_unwrapped': (gp.global_entropy_global, 'Global_Entropy_Unwrapped', True),
+            'global_entropy': (gp.global_entropy_global, 'Entropy_Global [bits]', False),
+            'global_entropy_unwrapped': (gp.global_entropy_global, 'Entropy_Unwrapped [bits]', True),
             
             # GSM
-            'sharpness_global': (gp.sharpness_global, 'Sharpness_Global', False),
-            'sharpness_unwrapped': (gp.sharpness_global, 'Sharpness_Unwrapped', True),
+            'sharpness_global': (gp.sharpness_global, 'GSM_Global', False),
+            'sharpness_unwrapped': (gp.sharpness_global, 'GSM_Unwrapped', True),
+
+            # FWHM/Resolution
+            'fwhm_resolution_global': (gp.fwhm_resolution_background, 'FWHM_R_Global', False),
+            'fwhm_resolution_unwrapped': (gp.fwhm_resolution_background, 'FWHM_R_Unwrapped', True),
+
             
             # ===== MODULE 3: Ground-Truth Comparisons =====
             
@@ -134,25 +139,23 @@ class MainFrame(wx.Frame):
         from core.imagej_bridge import check_for_imagej_updates
         
         try:
-            cambios = check_for_imagej_updates()
+            changes = check_for_imagej_updates()
         except Exception:
-            return  # ImageJ podría no estar iniciado todavía; ignoramos silenciosamente
+            return  # ImageJ might not be started yet; silently ignore
         
-        for titulo, pil_img in cambios:
-            if titulo in self.imagej_tab_map:
-                # Ya existe una pestaña vinculada a esta imagen: la actualizamos
-                idx = self.imagej_tab_map[titulo]
+        for title, pil_img in changes:
+            if title in self.imagej_tab_map:
+                # A tab is already linked to this image: update it
+                idx = self.imagej_tab_map[title]
                 if idx < self.notebook.GetPageCount():
                     panel = self.notebook.GetPage(idx)
                     panel.pil_img = pil_img
                     self.notebook._update_bitmap(panel.bitmap_ctrl, pil_img, panel.scale_factor)
                     continue
             
-            # No existe todavía: creamos una pestaña nueva y la registramos
-            panel = self.notebook.add_image_tab(pil_img, f"{titulo}_ImageJ")
-            self.imagej_tab_map[titulo] = self.notebook.GetPageCount() - 1
-
-
+            # Not linked yet: create a new tab and register it
+            panel = self.notebook.add_image_tab(pil_img, f"{title}_ImageJ")
+            self.imagej_tab_map[title] = self.notebook.GetPageCount() - 1
 
     def _setup_menus(self):
         # Set up the menu bar.
@@ -164,11 +167,11 @@ class MainFrame(wx.Frame):
         menubar.Append(help_menu.create(self), "&Help")
         self.SetMenuBar(menubar)
 
-        self.imagej_tab_map = {}  # Relaciona título de ImageJ -> índice de pestaña en tu notebook
+        self.imagej_tab_map = {}  # Maps ImageJ image title -> notebook tab index
 
         self.imagej_timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_check_imagej_updates, self.imagej_timer)
-        self.imagej_timer.Start(1500)  # Revisa cada 1.5 segundos
+        self.imagej_timer.Start(1500)  # Check every 1.5 seconds
 
     def _create_imagej_menu(self):
         """Create the ImageJ integration menu."""
@@ -187,26 +190,13 @@ class MainFrame(wx.Frame):
         if pil_img is None:
             return
         
-        show_imagej_gui()
-        pil_to_imageplus(pil_img, title=name)
+        show_imagej_gui(parent_window=self)
+        pil_to_imageplus(pil_img, title=name, parent_window=self)
         
-        # Creamos la pestaña vinculada DESDE AHORA, para que el timer solo la actualice
-        nuevo_panel = self.notebook.add_image_tab(pil_img, f"{name}_ImageJ")
-        self.imagej_tab_map[name] = self.notebook.GetPageCount() - 1
-
-    # def on_get_from_imagej(self, event):
-    #     """Retrieve the currently active image from ImageJ and add it as a new tab."""
-    #     from core.imagej_bridge import get_current_imagej_image_as_pil
-        
-    #     pil_resultado, titulo = get_current_imagej_image_as_pil()
-        
-    #     if pil_resultado is None:
-    #         wx.MessageBox("No active image found in ImageJ.", "Info", wx.ICON_INFORMATION)
-    #         return
-        
-    #     nuevo_nombre = f"{titulo}_from_ImageJ"
-    #     self.notebook.add_image_tab(pil_resultado, nuevo_nombre)
-    #     self.mark_as_sample_image(False)
+        # Only create a linked tab the FIRST time this image is sent
+        if name not in self.imagej_tab_map:
+            self.notebook.add_image_tab(pil_img, f"{name}_ImageJ")
+            self.imagej_tab_map[name] = self.notebook.GetPageCount() - 1
 
     def _setup_layout(self):
         # Set up the main layout.
@@ -228,7 +218,6 @@ class MainFrame(wx.Frame):
         analysis_index = menubar.FindMenu("&Analysis")
         if analysis_index == wx.NOT_FOUND:
             return
-
         analysis_menu = menubar.GetMenu(analysis_index)
         has_images = self.notebook.GetPageCount() > 0
         
@@ -252,9 +241,9 @@ class MainFrame(wx.Frame):
             elif self.is_sample_image:
                 # Sample image: only enable module 3
                 if module1_item:
-                    module1_item.Enable(False)
+                    module1_item.Enable(True)
                 if module2_item:
-                    module2_item.Enable(False)
+                    module2_item.Enable(True)
                 if module3_item:
                     module3_item.Enable(True)
                 if complexity_item:
@@ -282,8 +271,7 @@ class MainFrame(wx.Frame):
         self.metric_table.InsertColumn(0, "Image Name", width=250)
 
         self.metric_table.Bind(wx.EVT_CONTEXT_MENU, self.on_metric_table_context_menu)
-        
-        
+       
         if self.GetSizer():
             self.GetSizer().Add(self.metric_table, 0, wx.EXPAND | wx.ALL, 5)
             self.Layout()
@@ -354,7 +342,7 @@ class MainFrame(wx.Frame):
         }
         
         self._populate_zone_values(row, zone_stats, metric_label, col_indices)
-        
+    
         self._populate_zone_summary(row, zone_stats, col_indices, num_zones, metric_label)
 
     def _populate_zone_values(self, row, zone_stats, metric_label, col_indices):
@@ -376,8 +364,8 @@ class MainFrame(wx.Frame):
             
             if col_name not in col_indices:
                 continue
-            
-            # Buscar el valor con diferentes variantes del nombre
+           
+            # Search for the value with different variants of the name
             val = stat.get(metric_name_lower)  # 'std', 'mad', 'rms', etc.
             if val is None:
                 val = stat.get(base_metric.lower())
@@ -392,7 +380,7 @@ class MainFrame(wx.Frame):
                 if np.isfinite(val):
                     self.metric_table.SetItem(row, col_indices[col_name], f"{val:.4f}")
             except (ValueError, TypeError) as e:
-                print(f"⚠️ Error setting value for {col_name}: {e}")
+                print(f" Error setting value for {col_name}: {e}")
                 continue
 
     def _populate_zone_summary(self, row, zone_stats, col_indices, num_zones=None, metric_label=None):
@@ -477,10 +465,6 @@ class MainFrame(wx.Frame):
         
         if self.notebook.GetPageCount() > initial_count:
             self.mark_as_sample_image(False)  
-
-    #def on_save(self, event):
-        #img = self.notebook.get_current_image()
-        #file_manager.save_image(self, img)
 
     def _get_current_image_data(self):
         pil_img = self.notebook.get_current_image()
@@ -760,19 +744,12 @@ class MainFrame(wx.Frame):
 
         self.Bind(wx.EVT_MENU, self.on_export_all_csv, export_csv)
         self.Bind(wx.EVT_MENU, self.on_export_all_excel, export_excel)
-
-
         self.PopupMenu(menu)
         menu.Destroy()
 
     def on_mask_table_context_menu(self, event):
         # Show context menu for mask table.
         menu = wx.Menu()
-        #export_csv = menu.Append(wx.ID_ANY, "Export Mask Data to CSV")
-        #export_xls = menu.Append(wx.ID_ANY, "Export Mask Data to Excel")
-
-        #self.Bind(wx.EVT_MENU, self.on_export_mask_csv, export_csv)
-        #self.Bind(wx.EVT_MENU, self.export_all_tables, export_xls)
         export_csv = menu.Append(wx.ID_ANY, "Export All Tables to CSV")
         export_excel = menu.Append(wx.ID_ANY, "Export All Tables to Excel")
 
@@ -788,8 +765,6 @@ class MainFrame(wx.Frame):
         table_info = {
             "Metrics": (self.metric_table, self._get_metric_table_data),
             "Mask Data": (self.mask_table, self._get_mask_table_data),
-            #"Legendre": (self.legendre_table, self._get_legendre_data),
-            #"Background": (self.background_table, self._get_background_data),
         }
 
         # Check if there is at least one table with data
@@ -808,9 +783,7 @@ class MainFrame(wx.Frame):
 
         try:
 
-            # =====================================================
-            # EXPORT TO EXCEL (one workbook, multiple sheets)
-            # =====================================================
+            # Export to Excel
             if file_format.lower() == "excel":
 
                 with wx.FileDialog(
@@ -854,10 +827,7 @@ class MainFrame(wx.Frame):
                     "Success",
                     wx.OK | wx.ICON_INFORMATION
                 )
-
-            # =====================================================
-            # EXPORT TO CSV (one CSV file per table)
-            # =====================================================
+            # Export to CSV
             elif file_format.lower() == "csv":
 
                 with wx.DirDialog(
@@ -957,8 +927,6 @@ class MainFrame(wx.Frame):
 
     # Tab and window management
     def on_tab_change(self, event):
-        # Handle tab change event.
-        # Check if the current page is a sample image
         page = self.notebook.get_current_page()
         if page and hasattr(page, 'is_sample'):
             self.mark_as_sample_image(page.is_sample)
@@ -992,7 +960,6 @@ class MainFrame(wx.Frame):
 
     def on_legendre_background_unwrapped(self, event):
         # Legendre background analysis with unwrapping and multi-image selection.
-        # Show image selection dialog
         selected_indices = show_image_selection_dialog(self, self.notebook)
         
         if selected_indices is None:
@@ -1084,8 +1051,6 @@ class MainFrame(wx.Frame):
         plt.close('all')
     
     def on_legendre_background(self, event):
-        # Legendre background analysis without unwrapping with multi-image selection.
-        # Show image selection dialog
         selected_indices = show_image_selection_dialog(self, self.notebook)
         
         if selected_indices is None:
@@ -1248,11 +1213,7 @@ class MainFrame(wx.Frame):
                 table_info = {
                     "Metrics": self.metric_table,
                     "Mask Data": self.mask_table,
-                    #"Legendre": self.legendre_table,
-                    #"Background": self.background_table,
                 }
-    
-                # ¿Existe alguna tabla con datos?
                 has_data = any(
                     table is not None and table.GetItemCount() > 0
                     for table in table_info.values()
@@ -1265,8 +1226,6 @@ class MainFrame(wx.Frame):
                         wx.OK | wx.ICON_INFORMATION
                     )
                     return
-    
-                # Si hay datos, exportar todo
                 self.export_all_tables("excel")    
 
     def on_close(self, event):
@@ -1301,8 +1260,6 @@ class MainFrame(wx.Frame):
                 drive = wsl_path[0].lower()
                 wsl_path = f"/mnt/{drive}/{wsl_path[3:]}"  # /mnt/c/Users/...
 
-            # Execute GUI within WSL (without CREATE_NEW_CONSOLE)
-            #subprocess.Popen(["wsl", "python3", wsl_path])
             subprocess.Popen([sys.executable, gui_script])
 
             wx.MessageBox(
@@ -1319,10 +1276,9 @@ class MainFrame(wx.Frame):
             )
             wx.MessageBox(f"Error: {str(e)}", "Error", wx.ICON_ERROR)
 
-    # ==========================================
+
     # Residual Background Metrics (Module 1)
-    # ==========================================
-   
+  
     # STD handlers
     def on_std_background_unwrapped(self, event):
         self._process_metric_with_unwrap(event, rb.std_background, "STD")
@@ -1416,7 +1372,7 @@ class MainFrame(wx.Frame):
                 continue
 
     def get_zones_mode_from_user(self, num_images, num_zone_metrics):
-# Ask user which mode to use for zones based on context.
+        # Ask user which mode to use for zones based on context.
         # Case 1: Single image, single zone metric - no need to ask
         if num_images == 1 and num_zone_metrics == 1:
             return 'per_image'  # Default mode
@@ -1498,7 +1454,7 @@ class MainFrame(wx.Frame):
         return 'per_image'
 
     def _calculate_multiple_metrics(self, metrics_dict, image_indices):
-# Calculate multiple metrics for multiple images with single threshold per image per state.
+        # Calculate multiple metrics for multiple images with single threshold per image per state.
         # Verify ground-truth if needed
         if not self._ensure_ground_truth_loaded(metrics_dict):
             return
@@ -1638,9 +1594,9 @@ class MainFrame(wx.Frame):
         for metric_id in metrics_dict.keys():
             if 'zones' in metric_id:
                 zone_metrics.append(metric_id)
-            elif metric_id.startswith(('mmm_', 'gradient_', 'tsm_', 'curvature_',
+            elif metric_id.startswith(('mmm_', 'gradient_', 'tsm_',
                                     'laplacian_', 'spatial_freq_', 'global_entropy',
-                                    'sharpness_')):
+                                    'sharpness_', )):
                 module2_metrics.append(metric_id)
             elif metric_id.startswith(('ssim', 'mse', 'psnr')):
                 module3_metrics.append(metric_id)
@@ -1924,7 +1880,7 @@ class MainFrame(wx.Frame):
                 return None
         
         # MODULE 2: Global metrics (NO need mask)
-        elif metric_id.startswith(('mmm_', 'gradient_', 'tsm_', 'curvature_',
+        elif metric_id.startswith(('mmm_', 'gradient_', 'tsm_', 
                                 'laplacian_', 'spatial_freq_', 'global_entropy',
                                 'sharpness_')):
             if needs_unwrap:
@@ -2052,20 +2008,19 @@ class MainFrame(wx.Frame):
     # Finish of module 1
 
     
-    # ==========================================
     # Global Phase Distortion Metrics (Module 2)
-    # ==========================================
+
     def on_mmm_global(self, event):
-        self._process_global_metric(gp.maximum_minus_minimum, "MMM_Global", False)
+        self._process_global_metric(gp.maximum_minus_minimum, "PV_Global", False)
 
     def on_mmm_global_unwrapped(self, event):
-        self._process_global_metric(gp.maximum_minus_minimum, "MMM_Global", True)
+        self._process_global_metric(gp.maximum_minus_minimum, "PV_Global_U", True)
 
     def on_gradient_global(self, event):
-        self._process_global_metric(gp.global_phase_gradient, "Gradient_Global", False)
+        self._process_global_metric(gp.phase_gradient_prewitt, "Gradient_Global", False)
   
     def on_gradient_global_unwrapped(self, event):
-        self._process_global_metric(gp.global_phase_gradient, "Gradient_Global", True)
+        self._process_global_metric(gp.phase_gradient_prewitt, "Gradient_Global", True)
              
     def on_tsm_global(self, event):
         self._process_global_metric(gp.tsm_global, "TSM_Global", False)
@@ -2073,11 +2028,11 @@ class MainFrame(wx.Frame):
     def on_tsm_global_unwrapped(self, event):
         self._process_global_metric(gp.tsm_global, "TSM_Global", True)
 
-    def on_curvature_global(self, event):
-        self._process_global_metric(gp.reconstruction_background, "Legendre coefficients", False)
+    # def on_curvature_global(self, event):
+    #     self._process_global_metric(gp.reconstruction_background, "Legendre coefficients", False)
 
-    def on_curvature_global_unwrapped(self, event):
-        self._process_global_metric(gp.reconstruction_background, "Legendre coefficients", True)
+    # def on_curvature_global_unwrapped(self, event):
+    #     self._process_global_metric(gp.reconstruction_background, "Legendre coefficients", True)
 
     def on_laplacian_global(self, event):
         self._process_global_metric(gp.laplacian_energy, "Laplacian_Global", False)
@@ -2103,8 +2058,14 @@ class MainFrame(wx.Frame):
     def on_sharpness_global_unwrapped(self, event):
         self._process_global_metric(gp.sharpness_global, "Global Sharpness", True)
 
+    def on_fwhm_resolution_global(self, event):
+        self._process_global_metric(gp.fwhm_resolution_background, "FWHM/Resolution", False)
+
+    def on_fwhm_resolution_global_unwrapped(self, event):
+        self._process_global_metric(gp.fwhm_resolution_background, "FWHM/Resolution", True)
+
     def on_all_global_metrics_M2(self, event):
-# Compute all global phase metrics Module 2 (wrapped and unwrapped) at once for the current image.
+    # Compute all global phase metrics Module 2 (wrapped and unwrapped) at once for the current image.
         pil_img, name, page = self._get_current_image_data()
         if pil_img is None:
             return
@@ -2114,10 +2075,9 @@ class MainFrame(wx.Frame):
 
             # List of metrics with display names
             metrics = [
-                (gp.maximum_minus_minimum, "Maximum-Minus-Minimum"),
-                (gp.global_phase_gradient, "Global phase Gradient"),
+                (gp.maximum_minus_minimum, "Peak-to-Valley "),
+                (gp.phase_gradient_prewitt, "Global phase Gradient"),
                 (gp.tsm_global, "TSM"),
-                (gp.reconstruction_background, "Phase Curvature"),
                 (gp.laplacian_energy, "Laplacian Energy"),
                 (gp.spatial_frequency_global, "Spatial Frequency"),
                 (gp.global_entropy_global, "Global Entropy"),
@@ -2155,7 +2115,7 @@ class MainFrame(wx.Frame):
 
             # Show summary box with all results
             wx.MessageBox(
-                "✅ All global metrics calculated:\n\n" + "\n".join(results_summary),
+                " All global metrics calculated:\n\n" + "\n".join(results_summary),
                 "Global Metrics Summary",
                 wx.ICON_INFORMATION
             )
@@ -2164,9 +2124,8 @@ class MainFrame(wx.Frame):
             wx.MessageBox(f"Error calculating metrics:\n{str(e)}", "Error", wx.ICON_ERROR)
     # Finish of module 2
 
-    # ==========================================
+
     # Ground-Truth Comparisons (Module 3)
-    # ==========================================
     
     def on_load_ground_truth(self, event):
         # Load ground-truth image for comparison.
@@ -2192,8 +2151,7 @@ class MainFrame(wx.Frame):
                 wx.MessageBox(f"Error loading ground-truth: {str(e)}", "Error", wx.ICON_ERROR)
 
     def _ensure_ground_truth_loaded(self, metrics_dict):
-# Ensure ground-truth is loaded before calculating Module 3 metrics.
-        # Verificar si hay metrics del Módulo 3
+        # Ensure ground-truth is loaded before calculating Module 3 metrics.
         has_module3 = any(mid.startswith(('ssim', 'mse', 'psnr')) for mid in metrics_dict.keys())
         
         if not has_module3:
@@ -2202,7 +2160,7 @@ class MainFrame(wx.Frame):
         # Check current ground-truth status
         gt_loaded = hasattr(self, 'ground_truth_data') and self.ground_truth_data is not None
         
-        # 🔹 CASO 1: Ground-truth already loaded
+        # 🔹 CASE 1: Ground-truth already loaded
         if gt_loaded:
             gt_filename = os.path.basename(self.ground_truth_path) if hasattr(self, 'ground_truth_path') else 'Unknown'
             gt_shape = self.ground_truth_data.shape
@@ -2235,10 +2193,10 @@ class MainFrame(wx.Frame):
             # If chooses NO, continue with current
             return True
         
-        # 🔹 CASO 2: No ground-truth loaded
+        # 🔹 CASE 2: No ground-truth loaded
         else:
             message = (
-                "⚠️ No Ground-Truth Loaded\n\n"
+                "No Ground-Truth Loaded\n\n"
                 "Module 3 metrics require a ground-truth image for comparison.\n\n"
                 "Do you want to load a ground-truth image now?"
             )
@@ -2379,7 +2337,7 @@ class MainFrame(wx.Frame):
             wx.MessageBox(summary, "SSIM Unwrapped Result", wx.ICON_INFORMATION)
 
     def on_mse_comparison(self, event):
-# Calculate MSE between selected images and ground-truth.
+    # Calculate MSE between selected images and ground-truth.
         if not hasattr(self, 'ground_truth_data') or self.ground_truth_data is None:
             wx.MessageBox("Please load a ground-truth image first", "Error", wx.ICON_ERROR)
             return
@@ -2540,7 +2498,7 @@ class MainFrame(wx.Frame):
             wx.MessageBox(summary, "PSNR Result", wx.ICON_INFORMATION)
 
     def on_psnr_comparison_unwrapped(self, event):
-# Calculate PSNR with unwrapping for selected images.
+    # Calculate PSNR with unwrapping for selected images.
         if not hasattr(self, 'ground_truth_data') or self.ground_truth_data is None:
             wx.MessageBox("Please load a ground-truth image first", "Error", wx.ICON_ERROR)
             return

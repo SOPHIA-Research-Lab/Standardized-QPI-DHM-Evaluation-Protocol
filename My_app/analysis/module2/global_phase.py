@@ -7,89 +7,125 @@ import matplotlib.pyplot as plt
 from skimage.filters import threshold_local
 
 
-def global_phase_gradient(phase: np.ndarray, use_unwrap: bool = False):
-    """
-    Calculates the global phase gradient (GPG) of a phase image.
+# def global_phase_gradient(phase: np.ndarray, use_unwrap: bool = False):
+#     """
+#     Calculates the global phase gradient (GPG) of a phase image.
 
-    Parameters
-    ----------
-    phase : ndarray (float)
-        2D phase map in radians [-π, π].
-    use_unwrap : bool, optional
-        If True, applies 2π phase unwrapping before fitting (default: False).
+#     Parameters
+#     ----------
+#     phase : ndarray (float)
+#         2D phase map in radians [-π, π].
+#     use_unwrap : bool, optional
+#         If True, applies 2π phase unwrapping before fitting (default: False).
 
-    Returns
-    -------
-    alpha : float
-        Phase gradient along X direction (radians per pixel).
-    beta : float
-        Phase gradient along Y direction (radians per pixel).
-    phi0 : float
-        Global phase offset.
-    GPGLin : float
-        Average magnitude of the global phase gradient (radians/pixel).
-    phase_corrected : ndarray
-        Phase map with the fitted plane removed.
-    """
-    # Ensure input is a NumPy array
-    phase = np.asarray(phase, dtype=np.float64)
+#     Returns
+#     -------
+#     alpha : float
+#         Phase gradient along X direction (radians per pixel).
+#     beta : float
+#         Phase gradient along Y direction (radians per pixel).
+#     phi0 : float
+#         Global phase offset.
+#     GPGLin : float
+#         Average magnitude of the global phase gradient (radians/pixel).
+#     phase_corrected : ndarray
+#         Phase map with the fitted plane removed.
+#     """
+#     # Ensure input is a NumPy array
+#     phase = np.asarray(phase, dtype=np.float64)
 
-    # Optional unwrapping
-    if use_unwrap:
-        phase = unwrap_phase(phase)
+#     # Optional unwrapping
+#     if use_unwrap:
+#         phase = unwrap_phase(phase)
 
-    # Image size
-    ny, nx = phase.shape
-    X, Y = np.meshgrid(np.arange(nx), np.arange(ny))
+#     # Image size
+#     ny, nx = phase.shape
+#     X, Y = np.meshgrid(np.arange(nx), np.arange(ny))
 
-    # Flatten arrays for least squares
-    X = X.ravel()
-    Y = Y.ravel()
-    Z = phase.ravel()
+#     # Flatten arrays for least squares
+#     X = X.ravel()
+#     Y = Y.ravel()
+#     Z = phase.ravel()
 
-    # Fit a plane: Z = alpha*X + beta*Y + phi0
-    G = np.c_[X, Y, np.ones_like(X)]
-    coeffs, _, _, _ = np.linalg.lstsq(G, Z, rcond=None)
-    alpha, beta, phi0 = coeffs
+#     # Fit a plane: Z = alpha*X + beta*Y + phi0
+#     G = np.c_[X, Y, np.ones_like(X)]
+#     coeffs, _, _, _ = np.linalg.lstsq(G, Z, rcond=None)
+#     alpha, beta, phi0 = coeffs
 
-    # Reconstruct fitted plane
-    Xf, Yf = np.meshgrid(np.arange(nx), np.arange(ny))
-    plane = alpha * Xf + beta * Yf + phi0
+#     # Reconstruct fitted plane
+#     Xf, Yf = np.meshgrid(np.arange(nx), np.arange(ny))
+#     plane = alpha * Xf + beta * Yf + phi0
 
-    # Compute global phase gradient metric
-    GPGLin = np.sqrt(alpha**2 + beta**2)
+#     # Compute global phase gradient metric
+#     GPGLin = np.sqrt(alpha**2 + beta**2)
 
-    # Remove plane from phase (flatten phase map)
-    phase_corrected = phase - plane
+#     # Remove plane from phase (flatten phase map)
+#     phase_corrected = phase - plane
 
-    return alpha, beta, phi0, GPGLin, phase_corrected
+#     #return alpha, beta, phi0, GPGLin, phase_corrected
+#     return GPGLin
 
 
+# def phase_gradient_prewitt(E=None, phase=None, usePhaseUnwrap=False):
+#     """
+#     Computes the local phase gradient using Prewitt filters.
+
+#     Parameters
+#     ----------
+#     E : ndarray (complex), optional
+#         Reconstructed complex field.
+#     phase : ndarray (real), optional
+#         Reconstructed phase (in radians).
+#         Ignored if E is provided.
+#     usePhaseUnwrap : bool
+#         Whether to unwrap phase before computing gradient.
+
+#     Returns
+#     -------
+#     grad_x : ndarray
+#         Local phase gradient in x-direction (horizontal Prewitt).
+#     grad_y : ndarray
+#         Local phase gradient in y-direction (vertical Prewitt).
+#     grad_mag : ndarray
+#         Gradient magnitude.
+#     GPGPrw : float
+#         Global phase gradient magnitude (Prewitt).
+#     """
+#     if E is not None:
+#         phase = np.angle(E)
+#     elif phase is None:
+#         raise ValueError("You must provide either the complex field E or the phase.")
+
+#     if usePhaseUnwrap:
+#         phase_unwrapped = unwrap_phase(phase)
+#     else:
+#         phase_unwrapped = phase
+
+#     # Prewitt operators
+#     prewitt_x = np.array([[ -1, 0, 1],
+#                           [ -1, 0, 1],
+#                           [ -1, 0, 1]], dtype=float)
+
+#     prewitt_y = np.array([[  1,  1,  1],
+#                           [  0,  0,  0],
+#                           [ -1, -1, -1]], dtype=float)
+
+#     # Convolutions
+#     grad_x = convolve(phase_unwrapped, prewitt_x, mode="reflect")
+#     grad_y = convolve(phase_unwrapped, prewitt_y, mode="reflect")
+
+#     # Gradient magnitude
+#     grad_mag = np.hypot(grad_x, grad_y)
+#     N, M = grad_mag.shape
+#     GPGPrw = np.sum(grad_x ** 2 + grad_y ** 2) / (N * M)
+
+#     #return grad_x, grad_y, grad_mag, GPGPrw|
+#     return GPGPrw
 
 def phase_gradient_prewitt(E=None, phase=None, usePhaseUnwrap=False):
     """
-    Computes the local phase gradient using Prewitt filters.
-
-    Parameters
-    ----------
-    E : ndarray (complex), optional
-        Reconstructed complex field.
-    phase : ndarray (real), optional
-        Reconstructed phase (in radians).
-        Ignored if E is provided.
-    usePhaseUnwrap : bool
-        Whether to unwrap phase before computing gradient.
-
-    Returns
-    -------
-    grad_x : ndarray
-        Local phase gradient in x-direction (horizontal Prewitt).
-    grad_y : ndarray
-        Local phase gradient in y-direction (vertical Prewitt).
-    grad_mag : ndarray
-        Gradient magnitude.
-    GPGPrw : float
-        Global phase gradient magnitude (Prewitt).
+    Computes the Global Phase Gradient (GPG) using Prewitt filters,
+    following Yang et al., Opt. Express 31(22), 36188-36201 (2023), Eq. (8)-(10).
     """
     if E is not None:
         phase = np.angle(E)
@@ -101,69 +137,41 @@ def phase_gradient_prewitt(E=None, phase=None, usePhaseUnwrap=False):
     else:
         phase_unwrapped = phase
 
-    # Prewitt operators
-    prewitt_x = np.array([[ -1, 0, 1],
-                          [ -1, 0, 1],
-                          [ -1, 0, 1]], dtype=float)
+    # T1, T2 Prewitt operators (paper Eq. 10)
+    T1 = np.array([[1, 0, -1],
+                   [1, 0, -1],
+                   [1, 0, -1]], dtype=float)
+    T2 = np.array([[1, 1, 1],
+                   [0, 0, 0],
+                   [-1, -1, -1]], dtype=float)
 
-    prewitt_y = np.array([[  1,  1,  1],
-                          [  0,  0,  0],
-                          [ -1, -1, -1]], dtype=float)
+    G1 = convolve(phase_unwrapped, T1, mode="reflect")
+    G2 = convolve(phase_unwrapped, T2, mode="reflect")
 
-    # Convolutions
-    grad_x = convolve(phase_unwrapped, prewitt_x, mode="reflect")
-    grad_y = convolve(phase_unwrapped, prewitt_y, mode="reflect")
+    grad_mag = np.sqrt(G1**2 + G2**2)
 
-    # Gradient magnitude
-    grad_mag = np.hypot(grad_x, grad_y)
     N, M = grad_mag.shape
-    GPGPrw = np.sum(grad_x ** 2 + grad_y ** 2) / (N * M)
+    GPG = np.sum(grad_mag) / (N * M)
 
-    return grad_x, grad_y, grad_mag, GPGPrw
-
+    return  GPG
 
 
 def laplacian_energy(phase: np.ndarray, use_unwrap: bool = False):
-    """
-    Calculates the Laplacian energy of a phase image.
-
-    Parameters
-    ----------
-    phase : ndarray (float)
-        2D phase map in radians [-π, π].
-    use_unwrap : bool, optional
-        If True, applies 2π phase unwrapping before Laplacian computation (default: False).
-
-    Returns
-    -------
-    energy : float
-        Mean Laplacian energy (average of squared Laplacian values).
-    lap_map : ndarray
-        Laplacian map of the phase image.
-    mean_lap : float
-        Mean value of the Laplacian map (for reference, should be near zero).
-    std_lap : float
-        Standard deviation of the Laplacian map (contrast or sharpness indicator).
-    """
-    # Ensure input is a NumPy array
     phase = np.asarray(phase, dtype=np.float64)
 
-    # Optional phase unwrapping
     if use_unwrap:
         phase = unwrap_phase(phase)
 
-    # Replace invalid values
     phase = np.nan_to_num(phase, nan=0.0, posinf=0.0, neginf=0.0)
 
-    # Compute Laplacian
     lap_map = laplace(phase, mode="reflect")
 
-    # Compute energy and statistics
-    energy = float(np.mean(lap_map ** 2))
+    N, M = lap_map.shape
+    energy = float(np.sum(lap_map ** 2) / (N * M))
     mean_lap = float(np.mean(lap_map))
     std_lap = float(np.std(lap_map))
 
-    return energy, lap_map, mean_lap, std_lap
+    return energy
 
 
 def maximum_minus_minimum(phase: np.ndarray, use_unwrap: bool = False):
@@ -232,7 +240,7 @@ def spatial_frequency_global(phase: np.ndarray, use_unwrap: bool = False):
     # Total spatial frequency
     SF = np.sqrt(RF**2 + CF**2)
 
-    return SF, RF, CF
+    return SF
 
 def global_entropy_global(phase: np.ndarray, use_unwrap: bool = False, bins: int = 256, base: float = 2.0):
     """
@@ -402,7 +410,8 @@ def sharpness_global(phase: np.ndarray, use_unwrap: bool = False, beta: float = 
         raise ValueError("Phase image has zero dynamic range.")
 
     # --- Compute the generalized sharpness metric ---
-    GSM = np.sum(intensity ** beta)
+    M, N = intensity.shape
+    GSM = np.sum(intensity ** beta) / (M * N)
 
     return GSM
 
@@ -577,3 +586,128 @@ def reconstruction_background(coefficients, X, Y, orders):
     plt.tight_layout()
     plt.show(block=True)
     return superficie
+
+
+
+from typing import List, Tuple, Optional
+import numpy as np
+from numpy.fft import fft2, fftshift
+from skimage.restoration import unwrap_phase
+
+
+def _resolve_phase(E=None, phase=None, usePhaseUnwrap=False):
+
+    if E is not None:
+        phase = np.angle(E)
+    elif phase is None:
+        raise ValueError("You must provide either the complex field or the phase.")
+
+    phase = np.asarray(phase, dtype=np.float64)
+    if usePhaseUnwrap:
+        phase = unwrap_phase(phase)
+    return phase
+
+
+def _radial_log_power(values: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.ndim != 2 or arr.shape[0] < 8 or arr.shape[1] < 8:
+        return np.array([]), np.array([])
+
+    # remover el nivel DC y aplicar ventana para reducir fuga espectral
+    arr = arr - np.mean(arr)
+    window = np.outer(np.hanning(arr.shape[0]), np.hanning(arr.shape[1]))
+    arr = arr * window
+
+    F = fftshift(fft2(arr))
+    power = np.abs(F) ** 2
+
+    ny, nx = power.shape
+    cy, cx = ny // 2, nx // 2
+    y, x = np.indices((ny, nx))
+    r = np.sqrt((x - cx).astype(np.float64) ** 2 + (y - cy).astype(np.float64) ** 2)
+    r_int = r.astype(int)
+    max_r = int(r_int.max())
+
+    radial_sum = np.zeros(max_r + 1, dtype=np.float64)
+    radial_count = np.zeros(max_r + 1, dtype=np.float64)
+    np.add.at(radial_sum, r_int.ravel(), power.ravel())
+    np.add.at(radial_count, r_int.ravel(), 1.0)
+
+    valid = radial_count > 0
+    radial_mean = np.full(max_r + 1, np.nan)
+    radial_mean[valid] = radial_sum[valid] / radial_count[valid]
+
+    k = np.arange(max_r + 1, dtype=np.float64)
+    k2 = k ** 2
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        log_power = np.log(radial_mean)
+
+    finite = np.isfinite(log_power) & (radial_mean > 0)
+    return k2[finite], log_power[finite]
+
+
+def _fwhm_fourier(values: np.ndarray, fit_fraction: float = 0.6) -> float:
+    k2, log_power = _radial_log_power(values)
+    if k2.size < 5:
+        return np.nan
+
+    n_fit = max(5, int(len(k2) * fit_fraction))
+    k2_fit = k2[:n_fit]
+    log_power_fit = log_power[:n_fit]
+
+    try:
+        slope, _intercept = np.polyfit(k2_fit, log_power_fit, 1)
+    except Exception:
+        return np.nan
+
+    if not np.isfinite(slope) or slope >= 0:
+        # sin caida detectable -> no se puede estimar un FWHM valido
+        return np.nan
+
+    sigma = np.sqrt(-slope) / (2.0 * np.pi)
+    fwhm = 2.0 * np.sqrt(2.0 * np.log(2.0)) * sigma
+    return float(fwhm)
+
+
+def fwhm_resolution_background(E: Optional[np.ndarray] = None, phase: Optional[np.ndarray] = None,
+                                usePhaseUnwrap: bool = False, mask: Optional[np.ndarray] = None,
+                                manual: bool = False, num_zones: int = 3):
+
+    from analysis.module1.residual_background import select_manual_zones  # type: ignore
+
+    img = _resolve_phase(E, phase, usePhaseUnwrap)
+
+    if manual:
+        zones = select_manual_zones(img, num_zones)
+        if not zones:
+            return np.nan, []
+
+        fwhm_values = []
+        zone_stats = []
+
+        for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
+            zone = img[ymin:ymax, xmin:xmax]
+            fwhm = _fwhm_fourier(zone)
+            fwhm_values.append(fwhm)
+            zone_stats.append({
+                'zone': i,
+                'fwhm_resolution': fwhm,
+                'coords': (xmin, xmax, ymin, ymax),
+            })
+
+        fwhm_mean = float(np.nanmean(fwhm_values)) if fwhm_values else np.nan
+        return fwhm_mean, zone_stats
+
+    if mask is not None:
+        m = np.asarray(mask, dtype=bool)
+        rows = np.any(m, axis=1)
+        cols = np.any(m, axis=0)
+        if not rows.any() or not cols.any():
+            return np.nan
+        ymin, ymax = np.where(rows)[0][[0, -1]]
+        xmin, xmax = np.where(cols)[0][[0, -1]]
+        region = img[ymin:ymax + 1, xmin:xmax + 1]
+        return _fwhm_fourier(region)
+
+    return _fwhm_fourier(img)

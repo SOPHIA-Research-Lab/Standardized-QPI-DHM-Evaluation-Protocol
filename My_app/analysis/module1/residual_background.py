@@ -361,8 +361,7 @@ def std_background(img: np.ndarray, mask: Optional[np.ndarray] = None,
 
     values = img[mask] if mask is not None else img.flatten()
     std_val = float(np.std(values))
-    return std_val
-
+    return round(std_val, 4)
 
 def mean_absolute_deviation_background(img: np.ndarray, mask: Optional[np.ndarray] = None,
                                        manual: bool = False, num_zones: int = 3):
@@ -867,3 +866,5 @@ def reconstruction_background(coefficients, X, Y, orders):
             pass
 
     return superficie
+
+

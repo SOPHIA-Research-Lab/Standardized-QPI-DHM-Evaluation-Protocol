@@ -5,6 +5,7 @@ from PIL import Image
 from analysis.module1 import utilitiesRBPV as utRBPV
 from analysis.module1 import residual_background as rb
 
+
 def load_ground_truth(path):
     """ Load ground-truth image from file."""
     try:
@@ -30,8 +31,8 @@ def load_ground_truth(path):
         raise ValueError(f"Error loading ground-truth: {str(e)}")
 
 
-def calculate_ssim(sample, ground_truth, use_unwrap=False):
-    """ Calculate Structural Similarity Index (SSIM). """
+def _prepare_sample_and_gt(sample, ground_truth, use_unwrap=False):
+    
     # Convert sample to numpy if it's PIL
     if isinstance(sample, Image.Image):
         grayscale = sample.convert("L")
@@ -45,57 +46,52 @@ def calculate_ssim(sample, ground_truth, use_unwrap=False):
         sample_phase = rb.unwrap_with_scikit(sample_phase)
         ground_truth = rb.unwrap_with_scikit(ground_truth)
 
-    # Normalize both images to the same range
-    sample_norm = (sample_phase - sample_phase.min()) / (sample_phase.max() - sample_phase.min())
-    gt_norm = (ground_truth - ground_truth.min()) / (ground_truth.max() - ground_truth.min())
+    sample_phase = np.asarray(sample_phase, dtype=np.float64)
+    ground_truth = np.asarray(ground_truth, dtype=np.float64)
+
+    if sample_phase.shape != ground_truth.shape:
+        raise ValueError(
+            f"Shape mismatch between sample {sample_phase.shape} and "
+            f"ground-truth {ground_truth.shape}. Both images must have "
+            f"the same dimensions to be compared."
+        )
+
+    return sample_phase, ground_truth
+
+
+def calculate_ssim(sample, ground_truth, use_unwrap=False):
+    """ Calculate Structural Similarity Index (SSIM). """
+    sample_phase, ground_truth = _prepare_sample_and_gt(sample, ground_truth, use_unwrap)
+
+    gt_min = ground_truth.min()
+    gt_max = ground_truth.max()
+    gt_range = gt_max - gt_min
+
+    sample_norm = (sample_phase - gt_min) / gt_range
+    gt_norm = (ground_truth - gt_min) / gt_range
 
     # Calculate SSIM
     ssim_value = ssim(sample_norm, gt_norm, data_range=1.0)
-    
+
     return ssim_value
 
 
 def calculate_mse(sample, ground_truth, use_unwrap=False):
     """ Calculate Mean Squared Error (MSE)."""
-    # Convert sample to numpy if it's PIL
-    if isinstance(sample, Image.Image):
-        grayscale = sample.convert("L")
-        sample_array = np.array(grayscale, dtype=float)
-        sample_phase = utRBPV.grayscaleToPhase(sample_array)
-    else:
-        sample_phase = sample
+    sample_phase, ground_truth = _prepare_sample_and_gt(sample, ground_truth, use_unwrap)
 
-    # Unwrap if requested
-    if use_unwrap:
-        sample_phase = rb.unwrap_with_scikit(sample_phase)
-        ground_truth = rb.unwrap_with_scikit(ground_truth)
-
-    # Calculate MSE
     mse_value = mean_squared_error(ground_truth, sample_phase)
-    
+
     return mse_value
 
 
 def calculate_psnr(sample, ground_truth, use_unwrap=False):
     """ Calculate Peak Signal-to-Noise Ratio (PSNR)."""
-    # Convert sample to numpy if it's PIL
-    if isinstance(sample, Image.Image):
-        grayscale = sample.convert("L")
-        sample_array = np.array(grayscale, dtype=float)
-        sample_phase = utRBPV.grayscaleToPhase(sample_array)
-    else:
-        sample_phase = sample
+    sample_phase, ground_truth = _prepare_sample_and_gt(sample, ground_truth, use_unwrap)
 
-    # Unwrap if requested
-    if use_unwrap:
-        sample_phase = rb.unwrap_with_scikit(sample_phase)
-        ground_truth = rb.unwrap_with_scikit(ground_truth)
-
-    # Calculate data range
-    data_range = max(ground_truth.max() - ground_truth.min(),
-                     sample_phase.max() - sample_phase.min())
+    data_range = ground_truth.max() - ground_truth.min()
 
     # Calculate PSNR
     psnr_value = peak_signal_noise_ratio(ground_truth, sample_phase, data_range=data_range)
-    
+
     return psnr_value

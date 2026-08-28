@@ -102,7 +102,7 @@ def process_complex_field(notebook, complex_field, filename, field_name):
 
     # Show information message
     info_msg = (
-        f"✅ Complex field loaded successfully!\n\n"
+        f"Complex field loaded successfully!\n\n"
         f"File: {filename}\n"
         f"Field: {field_name}\n"
         f"Size: {complex_field.shape}\n\n"

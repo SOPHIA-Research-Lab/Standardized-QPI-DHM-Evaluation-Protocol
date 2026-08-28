@@ -120,36 +120,40 @@ def _show_module2_dialog(parent_frame):
     """Show dialog with ALL Module 2 metrics."""
     config = {
         # Maximum-Minus-Minimum
-        'mmm_global': {'label': 'Maximum-Minus-Minimum'},
-        'mmm_unwrapped': {'label': 'Maximum-Minus-Minimum - Unwrapped'},
+        'mmm_global': {'label': 'PV - Global'},
+        'mmm_unwrapped': {'label': 'PV - Unwrapped'},
         
         # Global Phase Gradient
-        'gradient_global': {'label': 'Phase Gradient'},
-        'gradient_unwrapped': {'label': 'Phase Gradient - Unwrapped'},
+        'gradient_global': {'label': 'GPG - Global'},
+        'gradient_unwrapped': {'label': 'GPG - Unwrapped'},
         
         # TSM
-        'tsm_global': {'label': 'TSM'},
+        'tsm_global': {'label': 'TSM - Global'},
         'tsm_unwrapped': {'label': 'TSM - Unwrapped'},
         
-        # Phase Curvature
-        'curvature_global': {'label': 'Phase Curvature'},
-        'curvature_unwrapped': {'label': 'Phase Curvature - Unwrapped'},
+        # # Phase Curvature
+        # 'curvature_global': {'label': 'Phase Curvature'},
+        # 'curvature_unwrapped': {'label': 'Phase Curvature - Unwrapped'},
         
         # Laplacian Energy
-        'laplacian_global': {'label': 'Laplacian Energy'},
-        'laplacian_unwrapped': {'label': 'Laplacian Energy - Unwrapped'},
+        'laplacian_global': {'label': 'LE - Global'},
+        'laplacian_unwrapped': {'label': 'LE - Unwrapped'},
         
         # Spatial Frequency
-        'spatial_freq_global': {'label': 'Spatial Frequency'},
-        'spatial_freq_unwrapped': {'label': 'Spatial Frequency - Unwrapped'},
+        'spatial_freq_global': {'label': 'SF - Global'},
+        'spatial_freq_unwrapped': {'label': 'SF - Unwrapped'},
         
         # Global Entropy
-        'global_entropy': {'label': 'Global Entropy'},
-        'global_entropy_unwrapped': {'label': 'Global Entropy - Unwrapped'},
+        'global_entropy': {'label': 'Entropy - Global'},
+        'global_entropy_unwrapped': {'label': 'Entropy - Unwrapped'},
         
         # Sharpness/Contrast
-        'sharpness_global': {'label': 'GSM (Generalized Sharpness Metric)'},
-        'sharpness_unwrapped': {'label': 'GSM (Generalized Sharpness Metric) - Unwrapped'},
+        'sharpness_global': {'label': 'GSM - Global'},
+        'sharpness_unwrapped': {'label': 'GSM - Unwrapped'},
+
+        # FWHM/Resolution
+        'fwhm_resolution_global': {'label': 'FWHM Resolution - Global'},
+        'fwhm_resolution_unwrapped': {'label': 'FWHM Resolution - Unwrapped'},
     }
     
     selected = show_metric_dialog(parent_frame, "Global Phase Distortion Metrics - Select Metrics", config)
@@ -168,9 +172,9 @@ def _show_module2_dialog(parent_frame):
             'tsm_global': parent_frame.on_tsm_global,
             'tsm_unwrapped': parent_frame.on_tsm_global_unwrapped,
             
-            # Curvature
-            'curvature_global': parent_frame.on_curvature_global,
-            'curvature_unwrapped': parent_frame.on_curvature_global_unwrapped,
+            # # Curvature
+            # 'curvature_global': parent_frame.on_curvature_global,
+            # 'curvature_unwrapped': parent_frame.on_curvature_global_unwrapped,
             
             # Laplacian
             'laplacian_global': parent_frame.on_laplacian_global,
@@ -187,6 +191,10 @@ def _show_module2_dialog(parent_frame):
             # Sharpness
             'sharpness_global': parent_frame.on_sharpness_global,
             'sharpness_unwrapped': parent_frame.on_sharpness_global_unwrapped,
+
+            # FWHM/Resolution
+            'fwhm_resolution_global': parent_frame.on_fwhm_resolution_global,
+            'fwhm_resolution_unwrapped': parent_frame.on_fwhm_resolution_global_unwrapped,
         }
         
         _process_selected_metrics(parent_frame, selected, handlers)
@@ -278,9 +286,6 @@ def process_selected_metrics(parent_frame, module_metrics_config):
     
     dlg.Destroy()
 
-# ==========================
-# Helper function
-# ==========================
 
 def _process_selected_metrics(parent_frame, selected_metrics, handlers):
     """
