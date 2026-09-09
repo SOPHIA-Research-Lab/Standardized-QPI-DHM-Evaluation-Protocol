@@ -7,63 +7,63 @@ import matplotlib.pyplot as plt
 from skimage.filters import threshold_local
 
 
-# def global_phase_gradient(phase: np.ndarray, use_unwrap: bool = False):
-#     """
-#     Calculates the global phase gradient (GPG) of a phase image.
+def phase_gradient_prewitt(phase: np.ndarray, use_unwrap: bool = False):
+    """
+    Calculates the global phase gradient (GPG) of a phase image.
 
-#     Parameters
-#     ----------
-#     phase : ndarray (float)
-#         2D phase map in radians [-π, π].
-#     use_unwrap : bool, optional
-#         If True, applies 2π phase unwrapping before fitting (default: False).
+    Parameters
+    ----------
+    phase : ndarray (float)
+        2D phase map in radians [-π, π].
+    use_unwrap : bool, optional
+        If True, applies 2π phase unwrapping before fitting (default: False).
 
-#     Returns
-#     -------
-#     alpha : float
-#         Phase gradient along X direction (radians per pixel).
-#     beta : float
-#         Phase gradient along Y direction (radians per pixel).
-#     phi0 : float
-#         Global phase offset.
-#     GPGLin : float
-#         Average magnitude of the global phase gradient (radians/pixel).
-#     phase_corrected : ndarray
-#         Phase map with the fitted plane removed.
-#     """
-#     # Ensure input is a NumPy array
-#     phase = np.asarray(phase, dtype=np.float64)
+    Returns
+    -------
+    alpha : float
+        Phase gradient along X direction (radians per pixel).
+    beta : float
+        Phase gradient along Y direction (radians per pixel).
+    phi0 : float
+        Global phase offset.
+    GPGLin : float
+        Average magnitude of the global phase gradient (radians/pixel).
+    phase_corrected : ndarray
+        Phase map with the fitted plane removed.
+    """
+    # Ensure input is a NumPy array
+    phase = np.asarray(phase, dtype=np.float64)
 
-#     # Optional unwrapping
-#     if use_unwrap:
-#         phase = unwrap_phase(phase)
+    # Optional unwrapping
+    if use_unwrap:
+        phase = unwrap_phase(phase)
 
-#     # Image size
-#     ny, nx = phase.shape
-#     X, Y = np.meshgrid(np.arange(nx), np.arange(ny))
+    # Image size
+    ny, nx = phase.shape
+    X, Y = np.meshgrid(np.arange(nx), np.arange(ny))
 
-#     # Flatten arrays for least squares
-#     X = X.ravel()
-#     Y = Y.ravel()
-#     Z = phase.ravel()
+    # Flatten arrays for least squares
+    X = X.ravel()
+    Y = Y.ravel()
+    Z = phase.ravel()
 
-#     # Fit a plane: Z = alpha*X + beta*Y + phi0
-#     G = np.c_[X, Y, np.ones_like(X)]
-#     coeffs, _, _, _ = np.linalg.lstsq(G, Z, rcond=None)
-#     alpha, beta, phi0 = coeffs
+    # Fit a plane: Z = alpha*X + beta*Y + phi0
+    G = np.c_[X, Y, np.ones_like(X)]
+    coeffs, _, _, _ = np.linalg.lstsq(G, Z, rcond=None)
+    alpha, beta, phi0 = coeffs
 
-#     # Reconstruct fitted plane
-#     Xf, Yf = np.meshgrid(np.arange(nx), np.arange(ny))
-#     plane = alpha * Xf + beta * Yf + phi0
+    # Reconstruct fitted plane
+    Xf, Yf = np.meshgrid(np.arange(nx), np.arange(ny))
+    plane = alpha * Xf + beta * Yf + phi0
 
-#     # Compute global phase gradient metric
-#     GPGLin = np.sqrt(alpha**2 + beta**2)
+    # Compute global phase gradient metric
+    GPGLin = np.sqrt(alpha**2 + beta**2)
 
-#     # Remove plane from phase (flatten phase map)
-#     phase_corrected = phase - plane
+    # Remove plane from phase (flatten phase map)
+    phase_corrected = phase - plane
 
-#     #return alpha, beta, phi0, GPGLin, phase_corrected
-#     return GPGLin
+    #return alpha, beta, phi0, GPGLin, phase_corrected
+    return GPGLin
 
 
 # def phase_gradient_prewitt(E=None, phase=None, usePhaseUnwrap=False):
@@ -122,38 +122,38 @@ from skimage.filters import threshold_local
 #     #return grad_x, grad_y, grad_mag, GPGPrw|
 #     return GPGPrw
 
-def phase_gradient_prewitt(E=None, phase=None, usePhaseUnwrap=False):
-    """
-    Computes the Global Phase Gradient (GPG) using Prewitt filters,
-    following Yang et al., Opt. Express 31(22), 36188-36201 (2023), Eq. (8)-(10).
-    """
-    if E is not None:
-        phase = np.angle(E)
-    elif phase is None:
-        raise ValueError("You must provide either the complex field E or the phase.")
+# def phase_gradient_prewitt(E=None, phase=None, usePhaseUnwrap=False):
+#     """
+#     Computes the Global Phase Gradient (GPG) using Prewitt filters,
+#     following Yang et al., Opt. Express 31(22), 36188-36201 (2023), Eq. (8)-(10).
+#     """
+#     if E is not None:
+#         phase = np.angle(E)
+#     elif phase is None:
+#         raise ValueError("You must provide either the complex field E or the phase.")
 
-    if usePhaseUnwrap:
-        phase_unwrapped = unwrap_phase(phase)
-    else:
-        phase_unwrapped = phase
+#     if usePhaseUnwrap:
+#         phase_unwrapped = unwrap_phase(phase)
+#     else:
+#         phase_unwrapped = phase
 
-    # T1, T2 Prewitt operators (paper Eq. 10)
-    T1 = np.array([[1, 0, -1],
-                   [1, 0, -1],
-                   [1, 0, -1]], dtype=float)
-    T2 = np.array([[1, 1, 1],
-                   [0, 0, 0],
-                   [-1, -1, -1]], dtype=float)
+#     # T1, T2 Prewitt operators (paper Eq. 10)
+#     T1 = np.array([[1, 0, -1],
+#                    [1, 0, -1],
+#                    [1, 0, -1]], dtype=float)
+#     T2 = np.array([[1, 1, 1],
+#                    [0, 0, 0],
+#                    [-1, -1, -1]], dtype=float)
 
-    G1 = convolve(phase_unwrapped, T1, mode="reflect")
-    G2 = convolve(phase_unwrapped, T2, mode="reflect")
+#     G1 = convolve(phase_unwrapped, T1, mode="reflect")
+#     G2 = convolve(phase_unwrapped, T2, mode="reflect")
 
-    grad_mag = np.sqrt(G1**2 + G2**2)
+#     grad_mag = np.sqrt(G1**2 + G2**2)
 
-    N, M = grad_mag.shape
-    GPG = np.sum(grad_mag) / (N * M)
+#     N, M = grad_mag.shape
+#     GPG = np.sum(grad_mag) / (N * M)
 
-    return  GPG
+#     return  GPG
 
 
 def laplacian_energy(phase: np.ndarray, use_unwrap: bool = False):

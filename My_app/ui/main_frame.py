@@ -1,3 +1,5 @@
+import traceback
+
 import wx
 import wx.aui
 import wx.lib.dialogs
@@ -17,6 +19,7 @@ import sys
 import os
 from ui.image_selection_dialog import show_image_selection_dialog
 from ui.metric_selection_dialog import MetricSelectionDialog
+import hashlib
 
 class MainFrame(wx.Frame):
 # Main application frame for image analysis.
@@ -39,6 +42,12 @@ class MainFrame(wx.Frame):
         self.ground_truth_data = None
         self._zones_cache = {} 
         self._shared_zones = None  
+        self._background_mask_cache = {}
+        self._unwrap_warning_shown = False
+        self._unwrap_choice = False
+        self._legendre_params_shown = False
+        self._legendre_limit = None
+        self._legendre_order = None
         self.CreateStatusBar()
         
         # Metric IDs to functions mapping
@@ -602,9 +611,8 @@ class MainFrame(wx.Frame):
                     img_array = np.array(grayscale, dtype=float)
                     sample = utRBPV.grayscaleToPhase(img_array)
                 
-                unwrapped = rb.unwrap_with_scikit(sample)
-                background_mask,  threshold = utRBPV.create_background_mask(
-                    unwrapped, method='otsu', parent=self
+                background_mask, threshold, _processed = self._get_or_create_background_mask(
+                    name, sample, needs_unwrap=True
                 )
                 
                 value = metric_func(sample, background_mask, manual=False, num_zones=2)
@@ -666,8 +674,8 @@ class MainFrame(wx.Frame):
                     img_array = np.array(grayscale, dtype=float)
                     sample = utRBPV.grayscaleToPhase(img_array)
                 
-                background_mask,  threshold = utRBPV.create_background_mask(
-                    sample, method='otsu', parent=self
+                background_mask, threshold, _processed = self._get_or_create_background_mask(
+                    name, sample, needs_unwrap=False
                 )
                 
                 value = metric_func(sample, background_mask, manual=False, num_zones=2)
@@ -711,7 +719,10 @@ class MainFrame(wx.Frame):
 
         self._close_detached_windows()
         self._destroy_tables()
-        
+
+        self._zones_cache.clear()
+        self._background_mask_cache.clear()
+
         self.is_sample_image = False
         self.Layout()
         self.update_analysis_menu_state()
@@ -937,10 +948,27 @@ class MainFrame(wx.Frame):
 
     def on_tab_close(self, event):
         # Handle tab close event.
-        wx.CallAfter(self._handle_tab_close_cleanup)
+        idx = event.GetSelection()
+        closed_image_name = None
+        if idx != wx.NOT_FOUND and idx < self.notebook.GetPageCount():
+            closed_image_name = self.notebook.GetPageText(idx)
+        
+        wx.CallAfter(self._handle_tab_close_cleanup, closed_image_name)
         event.Skip()
 
-    def _handle_tab_close_cleanup(self):
+    def _handle_tab_close_cleanup(self, closed_image_name=None):
+
+        if closed_image_name:
+            self._background_mask_cache.pop(closed_image_name, None)
+            
+            # Also clear any per-image zone selections tied to this image
+            keys_to_remove = [
+                k for k in self._zones_cache
+                if k == f"{closed_image_name}_zones" or k.startswith(f"{closed_image_name}_")
+            ]
+            for k in keys_to_remove:
+                del self._zones_cache[k]
+        
         # Execute after closing a tab. Clean up if no images remain.
         page_count = self.notebook.GetPageCount()
         
@@ -1008,9 +1036,8 @@ class MainFrame(wx.Frame):
                     sample = utRBPV.grayscaleToPhase(img_array)
                 
                 # Process image
-                unwrapped = rb.unwrap_with_scikit(sample)
-                background_mask,  threshold = utRBPV.create_background_mask(
-                    unwrapped, method='otsu', parent=self
+                background_mask, threshold, _processed = self._get_or_create_background_mask(
+                    name, sample, needs_unwrap=True
                 )
                 
                 # Calculate Legendre coefficients
@@ -1099,8 +1126,8 @@ class MainFrame(wx.Frame):
                     sample = utRBPV.grayscaleToPhase(img_array)
                 
                 # Process image
-                background_mask,  threshold = utRBPV.create_background_mask(
-                    sample, method='otsu', parent=self
+                background_mask, threshold, _processed = self._get_or_create_background_mask(
+                    name, sample, needs_unwrap=False
                 )
                 
                 # Calculate Legendre coefficients
@@ -1458,7 +1485,8 @@ class MainFrame(wx.Frame):
         # Verify ground-truth if needed
         if not self._ensure_ground_truth_loaded(metrics_dict):
             return
-        
+        self._unwrap_warning_shown = False
+        self._legendre_params_shown = False
         # Detect if there are zone metrics and ask for mode
         has_zone_metrics = any('zones' in mid for mid in metrics_dict.keys())
         
@@ -1605,21 +1633,28 @@ class MainFrame(wx.Frame):
         
 
         apply_unwrap = False
-        if zone_metrics: 
-            unwrap_dlg = wx.MessageDialog(
-                self,
-                "Do you want to apply 'unwrap' (phase unwrapping) to images before zone analysis?\n\n"
-                "Unwrapping helps remove 2π phase discontinuities but could jeopardize phase compensation.\n\n",
-                "Apply Phase Unwrapping for Zones",
-                style=wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION
-            )
-            unwrap_response = unwrap_dlg.ShowModal()
-            unwrap_dlg.Destroy()
-            apply_unwrap = unwrap_response == wx.ID_YES
-        
+        if zone_metrics:
+            if not self._unwrap_warning_shown:
+                unwrap_dlg = wx.MessageDialog(
+                    self,
+                    "Do you want to apply 'unwrap' (phase unwrapping) to images before zone analysis?\n\n"
+                    "Unwrapping helps remove 2π phase discontinuities but could jeopardize phase compensation.\n\n",
+                    "Apply Phase Unwrapping for Zones",
+                    style=wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION
+                )
+                unwrap_response = unwrap_dlg.ShowModal()
+                unwrap_dlg.Destroy()
+
+                apply_unwrap = (unwrap_response == wx.ID_YES)
+                self._unwrap_warning_shown = True
+                self._unwrap_choice = apply_unwrap
+            else:
+                apply_unwrap = self._unwrap_choice
+
+        zone_sample = sample  # copia separada para las métricas de zonas
         if apply_unwrap:
             try:
-                sample = rb.unwrap_with_scikit(sample)
+                zone_sample = rb.unwrap_with_scikit(sample)  # NO pisa 'sample'
             except Exception as e:
                 wx.MessageBox(f"Error applying unwrap to {image_name}: {e}", "Error", wx.ICON_ERROR)
                 return masks_cache
@@ -1627,38 +1662,47 @@ class MainFrame(wx.Frame):
         if module1_metrics:
             needs_unwrapped = any('unwrapped' in mid for mid in module1_metrics)
             needs_wrapped = any('unwrapped' not in mid and 'zones' not in mid for mid in module1_metrics)
-            
+
             if needs_wrapped:
-                
-                background_mask, threshold = utRBPV.create_background_mask(
-                    sample, method='otsu', parent=self
+                background_mask, threshold, processed_sample = self._get_or_create_background_mask(
+                    image_name, sample, needs_unwrap=False
                 )
-                masks_cache[False] = (background_mask, threshold, sample)
+                masks_cache[False] = (background_mask, threshold, processed_sample)
                 self._update_tables_with_mask_data(
                     image_name, sample, background_mask, threshold
                 )
-            
+
             if needs_unwrapped:
-                unwrap_dlg = wx.MessageDialog(
-                    self,
-                    "Unwrapping helps remove 2π phase discontinuities but could jeopardize phase compensation.",
-                    "Apply Phase Unwrapping for Zones",
-                    wx.OK | wx.ICON_QUESTION
+                cached_entry = self._background_mask_cache.get(image_name)
+                already_cached = (
+                    cached_entry is not None
+                    and cached_entry.get('unwrapped_sample') is not None
+                    and cached_entry['fingerprint'] == self._sample_fingerprint(sample)
                 )
 
-                unwrap_response = unwrap_dlg.ShowModal()
-                unwrap_dlg.Destroy()
+                if not already_cached and not self._unwrap_warning_shown:
+                    unwrap_dlg = wx.MessageDialog(
+                        self,
+                        "Unwrapping helps remove 2π phase discontinuities but could jeopardize phase compensation.",
+                        "Apply Phase Unwrapping for Zones",
+                        wx.OK | wx.ICON_QUESTION
+                    )
+                    unwrap_dlg.ShowModal()
+                    unwrap_dlg.Destroy()
+                    self._unwrap_warning_shown = True
 
                 try:
-                    
-                    unwrapped_sample = rb.unwrap_with_scikit(sample)
-                    background_mask, threshold = utRBPV.create_background_mask(
-                        unwrapped_sample, method='otsu', parent=self
+                    background_mask, threshold, unwrapped_sample = self._get_or_create_background_mask(
+                        image_name, sample, needs_unwrap=True
                     )
                     masks_cache[True] = (background_mask, threshold, unwrapped_sample)
                 except Exception as e:
-                    wx.MessageBox(f"Error applying unwrap: {e}", "Error", wx.ICON_ERROR)
-        
+                    import traceback
+                    print(f"[DEBUG] Excepción calculando unwrap para {image_name}:")
+                    traceback.print_exc()
+                    masks_cache['unwrap_error'] = str(e)
+                    wx.MessageBox(f"Error applying unwrap for {image_name}: {e}", "Error", wx.ICON_ERROR)
+            
         # Smart zone handling according to mode
         if zone_metrics:
             
@@ -1742,15 +1786,26 @@ class MainFrame(wx.Frame):
         
         # SPECIAL HANDLING FOR LEGENDRE METRICS
         if 'legendre' in metric_id.lower():
-            # Get limit parameter
-            limit = self._get_limit_from_user(default=64)
-            if limit is None:
-                return None
+            if not self._legendre_params_shown:
+                limit = self._get_limit_from_user(default=64)
+                if limit is None:
+                    return None
+                
+                ordermax = self._get_legendre_order_from_user(default=5)
+                if ordermax is None:
+                    return None
+                
+                self._legendre_limit = limit
+                self._legendre_order = ordermax
+                self._legendre_params_shown = True
+            else:
+                limit = self._legendre_limit
+                ordermax = self._legendre_order
             
-            # Get ordermax parameter
-            ordermax = self._get_legendre_order_from_user(default=5)
-            if ordermax is None:
-                return None
+            # # Get ordermax parameter
+            # ordermax = self._get_legendre_order_from_user(default=5)
+            # if ordermax is None:
+            #     return None
             
             # For zone-based Legendre
             if 'zones' in metric_id:
@@ -1916,7 +1971,7 @@ class MainFrame(wx.Frame):
             background_mask, threshold, processed_sample = masks_cache[needs_unwrap]
             
             try:
-                value = metric_func(sample, background_mask, manual=False, num_zones=2)
+                value = metric_func(processed_sample, background_mask, manual=False, num_zones=2)  # ✅ usa 'processed_sample'
                 self.update_table_with_zones(image_name, table_column, value)
                 return value
             except Exception as e:
@@ -2004,6 +2059,59 @@ class MainFrame(wx.Frame):
             for img_name, val in results.items():
                 summary += f"{img_name}: {val:.6f}\n"
             wx.MessageBox(summary, "Analysis Complete", wx.ICON_INFORMATION)
+
+    def _sample_fingerprint(self, sample):
+        """
+        Cheap content fingerprint used to detect whether the phase data for
+        an image actually changed (edited via ImageJ, reloaded, or a
+        different image reusing the same tab name), so the cached background
+        mask can be safely reused when nothing changed.
+        """
+        return hashlib.md5(np.ascontiguousarray(sample).tobytes()).hexdigest()
+    
+    
+    def _get_or_create_background_mask(self, image_name, sample, needs_unwrap):
+        """
+        Return (background_mask, threshold, processed_sample).
+
+        The Otsu background mask is computed ONLY ONCE per image, regardless
+        of whether wrapped or unwrapped metrics are requested. Unwrapping
+        only changes phase VALUES (removes 2*pi discontinuities); it does
+        NOT change which pixels belong to the background vs the sample, so
+        the same spatial mask is valid for both wrapped and unwrapped
+        metrics. Recomputing Otsu separately for each state was causing the
+        binarization dialog to appear twice when calculating "all Module 1
+        metrics" (which includes both wrapped and unwrapped variants).
+
+        The unwrapped version of the sample is also cached (once computed),
+        so repeated unwrapped metrics for the same image don't re-run
+        phase unwrapping unnecessarily either.
+        """
+        fingerprint = self._sample_fingerprint(sample)
+        cached = self._background_mask_cache.get(image_name)
+
+        if cached is None or cached['fingerprint'] != fingerprint:
+            # New image, or this image's data changed: (re)compute Otsu
+            # exactly once, always on the original (wrapped) sample.
+            background_mask, threshold = utRBPV.create_background_mask(
+                sample, method='otsu', parent=self
+            )
+            cached = {
+                'fingerprint': fingerprint,
+                'mask': background_mask,
+                'threshold': threshold,
+                'unwrapped_sample': None,
+            }
+            self._background_mask_cache[image_name] = cached
+
+        if needs_unwrap:
+            if cached['unwrapped_sample'] is None:
+                cached['unwrapped_sample'] = rb.unwrap_with_scikit(sample)
+            processed_sample = cached['unwrapped_sample']
+        else:
+            processed_sample = sample
+
+        return cached['mask'], cached['threshold'], processed_sample
 
     # Finish of module 1
 
