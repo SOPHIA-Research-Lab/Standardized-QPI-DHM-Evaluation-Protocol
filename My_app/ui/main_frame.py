@@ -17,9 +17,8 @@ import matplotlib.pyplot as plt
 import subprocess
 import sys
 import os
-from ui.image_selection_dialog import show_image_selection_dialog
-from ui.metric_selection_dialog import MetricSelectionDialog
 import hashlib
+import inspect
 
 class MainFrame(wx.Frame):
 # Main application frame for image analysis.
@@ -43,6 +42,8 @@ class MainFrame(wx.Frame):
         self._zones_cache = {} 
         self._shared_zones = None  
         self._background_mask_cache = {}
+        self._unwrapped_cache = {}
+        self._skip_reason = None
         self._unwrap_warning_shown = False
         self._unwrap_choice = False
         self._legendre_params_shown = False
@@ -63,6 +64,12 @@ class MainFrame(wx.Frame):
             'mad_background': (rb.mean_absolute_deviation_background, 'MAD_B [rad]', False),
             'mad_zones': (rb.mean_absolute_deviation_background, 'MAD_Zones [rad]', False),
             
+            # Mean (piston). RMS^2 = mean^2 + STD^2, so this is exactly the
+            # information RMS adds over STD.
+            'mean_unwrapped': (rb.mean_background, 'Mean_U_B [rad]', True),
+            'mean_background': (rb.mean_background, 'Mean_B [rad]', False),
+            'mean_zones': (rb.mean_background, 'Mean_Zones [rad]', False),
+
             # RMS metrics
             'rms_unwrapped': (rb.rms_background, 'RMS_U_B [rad]', True),
             'rms_background': (rb.rms_background, 'RMS_B [rad]', False),
@@ -96,8 +103,8 @@ class MainFrame(wx.Frame):
             'mmm_unwrapped': (gp.maximum_minus_minimum, 'PV_Global_U [rad]', True),
             
             # Phase Gradient
-            'gradient_global': (gp.phase_gradient_prewitt, 'Gradient_Global [rad/px]', False),
-            'gradient_unwrapped': (gp.phase_gradient_prewitt, 'Gradient_Unwrapped [rad/px]', True),
+            'gradient_global': (gp.phase_gradient_prewitt, 'GPG_Global [rad/px]', False),
+            'gradient_unwrapped': (gp.phase_gradient_prewitt, 'GPG_Unwrapped [rad/px]', True),
             
             # TSM
             'tsm_global': (gp.tsm_global, 'TSM_Global [%]', False),
@@ -108,8 +115,8 @@ class MainFrame(wx.Frame):
             # 'curvature_unwrapped': (gp.reconstruction_background, 'Curvature_Unwrapped', True),
             
             # Laplacian Energy
-            'laplacian_global': (gp.laplacian_energy, 'GPG_Global [rad/px]^2', False),
-            'laplacian_unwrapped': (gp.laplacian_energy, 'GPG_Unwrapped [rad/px]^2', True),
+            'laplacian_global': (gp.laplacian_energy, 'LE_Global [rad^2/px^4]', False),
+            'laplacian_unwrapped': (gp.laplacian_energy, 'LE_Unwrapped [rad^2/px^4]', True),
             
             # Spatial Frequency
             'spatial_freq_global': (gp.spatial_frequency_global, 'SF_Global [rad]', False),
@@ -124,33 +131,31 @@ class MainFrame(wx.Frame):
             'sharpness_unwrapped': (gp.sharpness_global, 'GSM_Unwrapped', True),
 
             # FWHM/Resolution
-            'fwhm_resolution_global': (gp.fwhm_resolution_background, 'FWHM_R_Global', False),
-            'fwhm_resolution_unwrapped': (gp.fwhm_resolution_background, 'FWHM_R_Unwrapped', True),
+            'fwhm_global': (gp.fwhm_global, 'FWHM_Global [rad]', False),
+            'fwhm_global_unwrapped': (gp.fwhm_global, 'FWHM_Global_U [rad]', True),
 
             
             # ===== MODULE 3: Ground-Truth Comparisons =====
             
             # SSIM
             'ssim': (gtc.calculate_ssim, 'SSIM', False),
-            'ssim_unwrapped': (gtc.calculate_ssim, 'SSIM_Unwrapped', True),
             
             # MSE
             'mse': (gtc.calculate_mse, 'MSE', False),
-            'mse_unwrapped': (gtc.calculate_mse, 'MSE_Unwrapped', True),
             
             # PSNR
             'psnr': (gtc.calculate_psnr, 'PSNR', False),
-            'psnr_unwrapped': (gtc.calculate_psnr, 'PSNR_Unwrapped', True),
         }
 
     def on_check_imagej_updates(self, event):
         """Periodically checks if the user edited any image inside ImageJ."""
-        from core.imagej_bridge import check_for_imagej_updates
-        
         try:
+            # Imported lazily and inside the try: pyimagej/scyjava may not be
+            # installed at all, and this runs on a 1.5 s timer.
+            from core.imagej_bridge import check_for_imagej_updates
             changes = check_for_imagej_updates()
         except Exception:
-            return  # ImageJ might not be started yet; silently ignore
+            return  # ImageJ not started or bridge unavailable; silently ignore
         
         for title, pil_img in changes:
             if title in self.imagej_tab_map:
@@ -178,9 +183,12 @@ class MainFrame(wx.Frame):
 
         self.imagej_tab_map = {}  # Maps ImageJ image title -> notebook tab index
 
+        # The timer is NOT started here: polling ImageJ from startup means a
+        # failed import every 1.5 s for users without pyimagej installed, and
+        # useless work for everyone who never opens ImageJ. It is started on
+        # demand by _ensure_imagej_polling() the first time an image is sent.
         self.imagej_timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_check_imagej_updates, self.imagej_timer)
-        self.imagej_timer.Start(1500)  # Check every 1.5 seconds
 
     def _create_imagej_menu(self):
         """Create the ImageJ integration menu."""
@@ -201,11 +209,17 @@ class MainFrame(wx.Frame):
         
         show_imagej_gui(parent_window=self)
         pil_to_imageplus(pil_img, title=name, parent_window=self)
+        self._ensure_imagej_polling()
         
         # Only create a linked tab the FIRST time this image is sent
         if name not in self.imagej_tab_map:
             self.notebook.add_image_tab(pil_img, f"{name}_ImageJ")
             self.imagej_tab_map[name] = self.notebook.GetPageCount() - 1
+
+    def _ensure_imagej_polling(self):
+        """Start polling ImageJ for edits, once an image has actually been sent."""
+        if not self.imagej_timer.IsRunning():
+            self.imagej_timer.Start(1500)  # Check every 1.5 seconds
 
     def _setup_layout(self):
         # Set up the main layout.
@@ -486,16 +500,6 @@ class MainFrame(wx.Frame):
             
         return pil_img, name, page
 
-    def _convert_to_phase(self, pil_img):
-        page = self.notebook.get_current_page()
-        
-        if page is not None and hasattr(page, 'is_mat_complex') and page.is_mat_complex:
-            if hasattr(page, 'phase') and page.phase is not None:
-                return page.phase
-        
-        grayscale = pil_img.convert("L")
-        img_array = np.array(grayscale, dtype=float)
-        return utRBPV.grayscaleToPhase(img_array)
 
     def _update_tables_with_mask_data(self, name, sample, background_mask, 
                                    threshold):
@@ -544,162 +548,6 @@ class MainFrame(wx.Frame):
         ) as dlg:
             return dlg.GetValue() if dlg.ShowModal() == wx.ID_OK else None
 
-    def _handle_zone_analysis_result(self, name, metric, result, num_zones):
-        # Handle the result from zone-based analysis.
-        value, zone_stats = result if isinstance(result, tuple) else (result, [])
-
-        if np.isnan(value):
-            wx.MessageBox("No zones were selected.", "Info", wx.ICON_INFORMATION)
-            return
-
-        self.update_table_with_zones(name, metric, value, zone_stats, num_zones=num_zones)
-        
-        if zone_stats:
-            self._show_zone_analysis_results(metric, num_zones, value, zone_stats)
-
-    def _show_zone_analysis_results(self, metric, num_zones, avg_value, zone_stats):
-        # Display zone analysis results to user.
-        metric_name = metric.split('_')[0]
-        zone_details = "\n".join([
-        f"Zone {stat['zone']}: {metric_name} = "
-        f"{stat.get(metric_name.lower(), 'N/A') if not isinstance(stat.get(metric_name.lower()), (int, float)) else f'{stat.get(metric_name.lower()):.6f}'}"
-        for stat in zone_stats
-        ])
-        
-        zone_info = (
-            f"Analysis completed:\n\n"
-            f"Requested zones: {num_zones}\n"
-            f"Selected zones: {len(zone_stats)}\n"
-            f"Average {metric_name}: {avg_value:.6f}\n\n"
-            f"Detail per zone:\n{zone_details}"
-        )
-
-        wx.MessageBox(zone_info, "Analysis Results", wx.ICON_INFORMATION)
-
-    def _process_metric_with_unwrap(self, event, metric_func, metric_name):
-        # Generic handler for unwrapped metrics with multi-image selection.
-        selected_indices = show_image_selection_dialog(self, self.notebook)
-        
-        if selected_indices is None:
-            return  
-        
-        progress = wx.ProgressDialog(
-            "Processing Images",
-            f"Calculating {metric_name}...",
-            maximum=len(selected_indices),
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE | wx.PD_SMOOTH
-        )
-        
-        results = {}
-        
-        try:
-            for idx, img_idx in enumerate(selected_indices):
-                panel = self.notebook.GetPage(img_idx)
-                pil_img = getattr(panel, 'pil_img', None)
-                name = self.notebook.GetPageText(img_idx)
-                
-                if pil_img is None:
-                    continue
-                
-                progress.Update(idx, f"Processing {name}...")
-                
-                if hasattr(panel, 'is_mat_complex') and panel.is_mat_complex and hasattr(panel, 'phase'):
-                    sample = panel.phase
-                else:
-                    grayscale = pil_img.convert("L")
-                    img_array = np.array(grayscale, dtype=float)
-                    sample = utRBPV.grayscaleToPhase(img_array)
-                
-                background_mask, threshold, _processed = self._get_or_create_background_mask(
-                    name, sample, needs_unwrap=True
-                )
-                
-                value = metric_func(sample, background_mask, manual=False, num_zones=2)
-                
-                # Update tables
-                self._update_tables_with_mask_data(
-                    name, sample, background_mask,  threshold
-                )
-                self.update_table_with_zones(name, f"{metric_name}_Unwrapped_Background", value)
-                
-                results[name] = value
-            
-            progress.Update(len(selected_indices))
-            
-        finally:
-            progress.Destroy()
-        
-        if results:
-            summary = f"Unwrapped background {metric_name} analysis completed:\n\n"
-            for img_name, val in results.items():
-                summary += f"{img_name}: {val:.6f}\n"
-            wx.MessageBox(summary, f"{metric_name} Background (Unwrapped) Results", wx.ICON_INFORMATION)
-        
-        plt.close('all')
-
-    def _process_metric_without_unwrap(self, event, metric_func, metric_name):
-        # Generic handler for non-unwrapped metrics with multi-image selection.
-        selected_indices = show_image_selection_dialog(self, self.notebook)
-        
-        if selected_indices is None:
-            return  
-        
-        progress = wx.ProgressDialog(
-            "Processing Images",
-            f"Calculating {metric_name}...",
-            maximum=len(selected_indices),
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE | wx.PD_SMOOTH
-        )
-        
-        results = {}
-        
-        try:
-            for idx, img_idx in enumerate(selected_indices):
-                # Get image from tab
-                panel = self.notebook.GetPage(img_idx)
-                pil_img = getattr(panel, 'pil_img', None)
-                name = self.notebook.GetPageText(img_idx)
-                
-                if pil_img is None:
-                    continue
-                
-                progress.Update(idx, f"Processing {name}...")
-                
-                if hasattr(panel, 'is_mat_complex') and panel.is_mat_complex and hasattr(panel, 'phase'):
-                    sample = panel.phase
-                else:
-                    grayscale = pil_img.convert("L")
-                    img_array = np.array(grayscale, dtype=float)
-                    sample = utRBPV.grayscaleToPhase(img_array)
-                
-                background_mask, threshold, _processed = self._get_or_create_background_mask(
-                    name, sample, needs_unwrap=False
-                )
-                
-                value = metric_func(sample, background_mask, manual=False, num_zones=2)
-                
-                self._update_tables_with_mask_data(
-                    name, sample, background_mask,  threshold
-                )
-                self.update_table_with_zones(name, f"{metric_name}_Background", value)
-                
-                results[name] = value
-            
-            progress.Update(len(selected_indices))
-            
-        finally:
-            progress.Destroy()
-        
-        if results:
-            summary = f"Background {metric_name} analysis completed:\n\n"
-            for img_name, val in results.items():
-                summary += f"{img_name}: {val:.6f}\n"
-            wx.MessageBox(summary, f"{metric_name} Background Results", wx.ICON_INFORMATION)
-        
-        plt.close('all')
-
 
     def on_clear(self, event):
         # Clear all images and tables.
@@ -722,6 +570,7 @@ class MainFrame(wx.Frame):
 
         self._zones_cache.clear()
         self._background_mask_cache.clear()
+        self._unwrapped_cache.clear()
 
         self.is_sample_image = False
         self.Layout()
@@ -895,17 +744,6 @@ class MainFrame(wx.Frame):
     def on_export_all_csv(self, event):
         self.export_all_tables("csv")
 
-    def on_export_metrics_csv(self, event):
-        self._export_table_data("metrics", "csv")
-
-    def on_export_metrics_excel(self, event):
-        self._export_table_data("metrics", "excel")
-
-    def on_export_mask_csv(self, event):
-        self._export_table_data("mask", "csv")
-
-    def on_export_mask_excel(self, event):
-        self._export_table_data("mask", "excel")
 
     def _get_metric_table_data(self):
         # Extract metrics table data for export.
@@ -960,6 +798,7 @@ class MainFrame(wx.Frame):
 
         if closed_image_name:
             self._background_mask_cache.pop(closed_image_name, None)
+            self._unwrapped_cache.pop(closed_image_name, None)
             
             # Also clear any per-image zone selections tied to this image
             keys_to_remove = [
@@ -986,255 +825,7 @@ class MainFrame(wx.Frame):
             else:
                 self.mark_as_sample_image(False)
 
-    def on_legendre_background_unwrapped(self, event):
-        # Legendre background analysis with unwrapping and multi-image selection.
-        selected_indices = show_image_selection_dialog(self, self.notebook)
-        
-        if selected_indices is None:
-            return  # User cancelled
-        
-        # Get limit parameter from user
-        limit = self._get_limit_from_user(default=64)
-        if limit is None:
-            return
-        
-        # Get number of coefficients from user
-        order_max = self._get_legendre_order_from_user(default=5)
-        if order_max is None:
-            return
-        
-        # Progress dialog
-        progress = wx.ProgressDialog(
-            "Processing Images",
-            "Calculating Legendre coefficients...",
-            maximum=len(selected_indices),
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE | wx.PD_SMOOTH
-        )
-        
-        results = {}
-        
-        try:
-            for idx, img_idx in enumerate(selected_indices):
-                # Get image from tab
-                panel = self.notebook.GetPage(img_idx)
-                pil_img = getattr(panel, 'pil_img', None)
-                name = self.notebook.GetPageText(img_idx)
-                
-                if pil_img is None:
-                    continue
-                
-                # Update progress
-                progress.Update(idx, f"Processing {name}...")
-                
-                # Convert to phase
-                if hasattr(panel, 'is_mat_complex') and panel.is_mat_complex and hasattr(panel, 'phase'):
-                    sample = panel.phase
-                else:
-                    grayscale = pil_img.convert("L")
-                    img_array = np.array(grayscale, dtype=float)
-                    sample = utRBPV.grayscaleToPhase(img_array)
-                
-                # Process image
-                background_mask, threshold, _processed = self._get_or_create_background_mask(
-                    name, sample, needs_unwrap=True
-                )
-                
-                # Calculate Legendre coefficients
-                coefficients = rb.legendre_background(sample, background_mask, manual=False, num_zones=2, limit=limit, order_max=order_max)
-                
-                # Update tables
-                self._update_tables_with_mask_data(
-                    name, sample, background_mask,  threshold
-                )
-                
-                # Add each Legendre coefficient as a separate column
-                self.ensure_metric_table()
-                row = self._find_or_create_row(name)
-                
-                for i, coeff in enumerate(coefficients):
-                    col_name = f"Legendre_C{i+1}_Unwrapped"
-                    self._ensure_column(col_name, width=120)
-                    col_idx = self._get_column_index_by_name(col_name)
-                    if col_idx >= 0:
-                        self.metric_table.SetItem(row, col_idx, f"{coeff:.6f}")
-                
-                results[name] = coefficients
-            
-            progress.Update(len(selected_indices))
-            
-        finally:
-            progress.Destroy()
-        
-        # Show summary
-        if results:
-            summary = f"Unwrapped background Legendre analysis completed:\n\n"
-            summary += f"Limit parameter: {limit}\n"
-            summary += f"Order (coefficients): {order_max}\n\n"
-            for img_name in results.keys():
-                summary += f"{img_name}: {len(results[img_name])} coefficients calculated\n"
-            wx.MessageBox(summary, "Legendre Background (Unwrapped) Results", wx.ICON_INFORMATION)
-        
-        plt.close('all')
     
-    def on_legendre_background(self, event):
-        selected_indices = show_image_selection_dialog(self, self.notebook)
-        
-        if selected_indices is None:
-            return  # User cancelled
-        
-        # Get limit parameter from user
-        limit = self._get_limit_from_user(default=64)
-        if limit is None:
-            return
-        
-        # Get number of coefficients from user
-        order_max = self._get_legendre_order_from_user(default=5)
-        if order_max is None:
-            return
-        
-        # Progress dialog
-        progress = wx.ProgressDialog(
-            "Processing Images",
-            "Calculating Legendre coefficients...",
-            maximum=len(selected_indices),
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE | wx.PD_SMOOTH
-        )
-        
-        results = {}
-        
-        try:
-            for idx, img_idx in enumerate(selected_indices):
-                # Get image from tab
-                panel = self.notebook.GetPage(img_idx)
-                pil_img = getattr(panel, 'pil_img', None)
-                name = self.notebook.GetPageText(img_idx)
-                
-                if pil_img is None:
-                    continue
-                
-                # Update progress
-                progress.Update(idx, f"Processing {name}...")
-                
-                # Convert to phase
-                if hasattr(panel, 'is_mat_complex') and panel.is_mat_complex and hasattr(panel, 'phase'):
-                    sample = panel.phase
-                else:
-                    grayscale = pil_img.convert("L")
-                    img_array = np.array(grayscale, dtype=float)
-                    sample = utRBPV.grayscaleToPhase(img_array)
-                
-                # Process image
-                background_mask, threshold, _processed = self._get_or_create_background_mask(
-                    name, sample, needs_unwrap=False
-                )
-                
-                # Calculate Legendre coefficients
-                coefficients = rb.legendre_background(sample, background_mask, manual=False, num_zones=2, limit=limit, order_max=order_max, NoPistonCompensation=False, UsePCA=True)
-                
-                # Update tables
-                self._update_tables_with_mask_data(
-                    name, sample, background_mask,  threshold
-                )
-                
-                # Add each Legendre coefficient as a separate column
-                self.ensure_metric_table()
-                row = self._find_or_create_row(name)
-                
-                for i, coeff in enumerate(coefficients):
-                    col_name = f"Legendre_C{i+1}"
-                    self._ensure_column(col_name, width=100)
-                    col_idx = self._get_column_index_by_name(col_name)
-                    if col_idx >= 0:
-                        self.metric_table.SetItem(row, col_idx, f"{coeff:.6f}")
-                
-                results[name] = coefficients
-            
-            progress.Update(len(selected_indices))
-            
-        finally:
-            progress.Destroy()
-        
-        # Show summary
-        if results:
-            summary = f"Background Legendre analysis completed:\n\n"
-            summary += f"Limit parameter: {limit}\n"
-            summary += f"Order (coefficients): {order_max}\n\n"
-            for img_name in results.keys():
-                summary += f"{img_name}: {len(results[img_name])} coefficients calculated\n"
-            wx.MessageBox(summary, "Legendre Background Results", wx.ICON_INFORMATION)
-        
-        plt.close('all')
-        
-    def on_legendre_background_zones(self, event):
-        # Legendre background analysis with zone selection.
-        pil_img, name, page = self._get_current_image_data()
-        if pil_img is None:
-            return
-
-        sample = self._convert_to_phase(pil_img)
-        
-        # Get limit parameter from user
-        limit = self._get_limit_from_user(default=64)
-        if limit is None:
-            return  # User cancelled
-        
-        # Get number of coefficients from user
-        order_max = self._get_legendre_order_from_user(default=5)
-        if order_max is None:
-            return  # User cancelled
-        
-        num_zones = self._get_zone_count_from_user()
-        if num_zones is None:
-            return
-
-        try:
-            # Pass limit and order_max parameters to legendre_background
-            result = rb.legendre_background(sample, mask=None, manual=True, num_zones=num_zones, limit=limit, order_max=order_max, NoPistonCompensation=False, UsePCA=False)
-            
-            if isinstance(result, tuple):
-                mean_coeffs, zone_stats = result
-            else:
-                wx.MessageBox("No zones were selected.", "Info", wx.ICON_INFORMATION)
-                return
-            
-            if len(zone_stats) == 0:
-                wx.MessageBox("No zones were selected.", "Info", wx.ICON_INFORMATION)
-                return
-            
-            # Add mean coefficients to table
-            self.ensure_metric_table()
-            row = self._find_or_create_row(name)
-            
-            for i, coeff in enumerate(mean_coeffs):
-                col_name = f"Legendre_C{i+1}_Zones"
-                self._ensure_column(col_name, width=120)
-                col_idx = self._get_column_index_by_name(col_name)
-                if col_idx >= 0:
-                    self.metric_table.SetItem(row, col_idx, f"{coeff:.6f}")
-            
-            # Show results
-            zone_details = "\n".join([
-                f"Zone {stat['zone']}: {len(stat['legendre'])} coefficients computed"
-                for stat in zone_stats
-            ])
-            
-            zone_info = (
-                f"Legendre analysis with zones completed:\n\n"
-                f"Limit parameter: {limit}\n"
-                f"Order (coefficients): {order_max}\n"
-                f"Requested zones: {num_zones}\n"
-                f"Selected zones: {len(zone_stats)}\n"
-                f"Number of coefficients calculated: {len(mean_coeffs)}\n\n"
-                f"Detail per zone:\n{zone_details}"
-            )
-
-            wx.MessageBox(zone_info, "Legendre Analysis Results", wx.ICON_INFORMATION)
-            
-        except Exception as e:
-            wx.MessageBox(f"Error: {str(e)}", "Error", wx.ICON_ERROR)
-
     def on_save(self, event):
     
                 table_info = {
@@ -1268,7 +859,12 @@ class MainFrame(wx.Frame):
             current_dir = os.path.dirname(os.path.abspath(__file__))  # ui/
             parent_dir = os.path.dirname(current_dir)  # My_app/
             complexity_repo_path = os.path.join(parent_dir, 'complexity_algorithm')
-            gui_script = os.path.join(complexity_repo_path, 'main.py')
+            # 'Main.py' with a capital M: that is the real file name. Spelling it
+            # 'main.py' only worked because Windows paths are case
+            # insensitive; on Linux/macOS it failed with a message blaming
+            # a missing repository. Module IV needs Linux 'perf', so those
+            # are exactly the platforms where this has to work.
+            gui_script = os.path.join(complexity_repo_path, 'Main.py')
 
             # Verify if the file exists in Windows
             if not os.path.exists(gui_script):
@@ -1281,16 +877,13 @@ class MainFrame(wx.Frame):
                 )
                 return
 
-            # Convert the path from Windows format to WSL format (/mnt/c/Users/...)
-            wsl_path = gui_script.replace("\\", "/")
-            if wsl_path[1] == ":":
-                drive = wsl_path[0].lower()
-                wsl_path = f"/mnt/{drive}/{wsl_path[3:]}"  # /mnt/c/Users/...
-
             subprocess.Popen([sys.executable, gui_script])
 
             wx.MessageBox(
-                "Computational Complexity GUI launched successfully!",
+                "Computational Complexity GUI launched successfully!\n\n"
+                "Note: the profiling step relies on the Linux 'perf' "
+                "utility, so measurements require Linux or WSL2. "
+                "The GUI itself opens on any platform.",
                 "Success",
                 wx.ICON_INFORMATION
             )
@@ -1301,102 +894,10 @@ class MainFrame(wx.Frame):
                 "Error",
                 wx.ICON_ERROR
             )
-            wx.MessageBox(f"Error: {str(e)}", "Error", wx.ICON_ERROR)
 
 
     # Residual Background Metrics (Module 1)
   
-    # STD handlers
-    def on_std_background_unwrapped(self, event):
-        self._process_metric_with_unwrap(event, rb.std_background, "STD")
-
-    def on_std_background(self, event):
-        self._process_metric_without_unwrap(event, rb.std_background, "STD")
-
-    def on_std_background_zones(self, event):
-        self._process_metric_zones(event, rb.std_background, "STD")
-
-    # MAD handlers
-    def on_mad_background_unwrapped(self, event):
-        self._process_metric_with_unwrap(event, rb.mean_absolute_deviation_background, "MAD")
-
-    def on_mad_background(self, event):
-        self._process_metric_without_unwrap(event, rb.mean_absolute_deviation_background, "MAD")
-
-    def on_mad_background_zones(self, event):
-        self._process_metric_zones(event, rb.mean_absolute_deviation_background, "MAD")
-
-    # RMS handlers
-    def on_rms_background_unwrapped(self, event):
-        self._process_metric_with_unwrap(event, rb.rms_background, "RMS")
-
-    def on_rms_background(self, event):
-        self._process_metric_without_unwrap(event, rb.rms_background, "RMS")
-
-    def on_rms_background_zones(self, event):
-        self._process_metric_zones(event, rb.rms_background, "RMS")
-
-    # PV handlers
-    def on_pv_background_unwrapped(self, event):
-        self._process_metric_with_unwrap(event, rb.pv_background, "PV")
-
-    def on_pv_background(self, event):
-        self._process_metric_without_unwrap(event, rb.pv_background, "PV")
-
-    def on_pv_background_zones(self, event):
-        self._process_metric_zones(event, rb.pv_background, "PV")
-
-    # FWHM handlers
-    def on_fwhm_background_unwrapped(self, event):
-        self._process_metric_with_unwrap(event, rb.fwhm_background, "FWHM")
-
-    def on_fwhm_background(self, event):
-        self._process_metric_without_unwrap(event, rb.fwhm_background, "FWHM")
-
-    def on_fwhm_background_zones(self, event):
-        self._process_metric_zones(event, rb.fwhm_background, "FWHM")
-
-    # Entropy handlers
-    def on_entropy_background_unwrapped(self, event):
-        self._process_metric_with_unwrap(event, rb.entropy_background, "Entropy")
-
-    def on_entropy_background(self, event):
-        self._process_metric_without_unwrap(event, rb.entropy_background, "Entropy")
-
-    def on_entropy_background_zones(self, event):
-        self._process_metric_zones(event, rb.entropy_background, "Entropy")
-
-    def on_all_metrics(self, event):
-# Calculate all metrics for all opened images.
-        count = self.notebook.GetPageCount()
-        if count == 0:
-            wx.MessageBox("No images opened", "Error", wx.ICON_ERROR)
-            return
-
-        for idx in range(count):
-            pil_img = self.notebook.images[idx]
-            name = self.notebook.GetPageText(idx)
-            page = self.notebook.GetPage(idx)
-
-            if pil_img is None or name is None:
-                continue
-
-            try:
-                if hasattr(page, 'is_mat_complex') and page.is_mat_complex and hasattr(page, 'phase'):
-                    phase_img = page.phase
-                else:
-                    grayscale = pil_img.convert("L")
-                    img_array = np.array(grayscale, dtype=float)
-                    phase_img = utRBPV.grayscaleToPhase(img_array)
-                
-                std_simple_val = rb.std_background(phase_img)
-                mad_val = rb.mean_absolute_deviation_background(phase_img)
-
-                self.update_table_with_zones(name, "STD_Simple", std_simple_val)
-                self.update_table_with_zones(name, "MAD", mad_val)
-                
-            except Exception as e:
-                continue
 
     def get_zones_mode_from_user(self, num_images, num_zone_metrics):
         # Ask user which mode to use for zones based on context.
@@ -1480,12 +981,72 @@ class MainFrame(wx.Frame):
         # Default case
         return 'per_image'
 
+    # Each RMS variant drags its matching mean along (see _RMS_MEAN_PAIRS below)
+    _RMS_MEAN_PAIRS = (
+        ('rms_background', 'mean_background', 'Mean - Background'),
+        ('rms_unwrapped', 'mean_unwrapped', 'Mean - Unwrapped Background'),
+        ('rms_zones', 'mean_zones', 'Mean - Background Zones'),
+    )
+
+    def _ask_unwrap_once(self):
+        """
+        Ask ONCE per batch whether phase unwrapping may be applied.
+
+        The three paths used to behave differently: zone metrics got a Yes/No
+        question, Module 1 unwrapped metrics got an OK-only notice they could
+        not refuse, and Module 2 unwrapped metrics got nothing at all and were
+        unwrapped silently. Every path now shares this single answer.
+
+        Answering No is binding: metrics that REQUIRE unwrapped phase are
+        skipped instead of being silently computed on wrapped data. Zone
+        metrics, where unwrapping is optional, run on the wrapped phase.
+        """
+        if self._unwrap_warning_shown:
+            return self._unwrap_choice
+
+        dlg = wx.MessageDialog(
+            self,
+            "Some of the selected metrics use phase unwrapping.\n\n"
+            "Unwrapping removes 2π discontinuities, but it can jeopardize "
+            "phase compensation and introduce errors of its own.\n\n"
+            "Yes - apply unwrapping where the metric calls for it.\n"
+            "No  - do not unwrap. Metrics that require unwrapped phase will be "
+            "skipped; zone metrics will use the wrapped phase.",
+            "Apply Phase Unwrapping?",
+            style=wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION
+        )
+        respuesta = dlg.ShowModal()
+        dlg.Destroy()
+
+        self._unwrap_choice = (respuesta == wx.ID_YES)
+        self._unwrap_warning_shown = True
+        return self._unwrap_choice
+
     def _calculate_multiple_metrics(self, metrics_dict, image_indices):
         # Calculate multiple metrics for multiple images with single threshold per image per state.
+
+        # The mean is exactly what RMS adds over STD, because
+        # RMS^2 = mean^2 + STD^2. On its own it is not a quality figure, so it
+        # is not offered as a separate checkbox: it is computed whenever RMS
+        # is, and the three columns can then be read (and checked) together.
+        metrics_dict = dict(metrics_dict)
+        for rms_id, mean_id, mean_label in self._RMS_MEAN_PAIRS:
+            if rms_id in metrics_dict and mean_id not in metrics_dict:
+                metrics_dict[mean_id] = mean_label
+
         # Verify ground-truth if needed
         if not self._ensure_ground_truth_loaded(metrics_dict):
             return
         self._unwrap_warning_shown = False
+
+        # One question for the whole batch, asked up front and only when
+        # something in the selection can actually use unwrapping.
+        necesita_unwrap = any(
+            'zones' in mid or self.metric_map.get(mid, (None, None, False))[2]
+            for mid in metrics_dict
+        )
+        if necesita_unwrap:
+            self._ask_unwrap_once()
         self._legendre_params_shown = False
         # Detect if there are zone metrics and ask for mode
         has_zone_metrics = any('zones' in mid for mid in metrics_dict.keys())
@@ -1577,10 +1138,16 @@ class MainFrame(wx.Frame):
                             masks_cache
                         )
                         
-                        if value is not None:
-                            results_summary.append(f" ✓ {metric_label}: {value:.6f}")
+                        if value is None:
+                            motivo = self._skip_reason or "skipped"
+                            results_summary.append(f" ⊘ {metric_label}: {motivo}")
+                        elif not np.isfinite(value):
+                            results_summary.append(
+                                f" ⊘ {metric_label}: undefined (NaN) — the estimator "
+                                f"does not apply to this data"
+                            )
                         else:
-                            results_summary.append(f" ⊘ {metric_label}: Skipped")
+                            results_summary.append(f" ✓ {metric_label}: {value:.6f}")
                             
                     except Exception as e:
                         results_summary.append(f" ✗ {metric_label}: ERROR - {str(e)}")
@@ -1624,7 +1191,7 @@ class MainFrame(wx.Frame):
                 zone_metrics.append(metric_id)
             elif metric_id.startswith(('mmm_', 'gradient_', 'tsm_',
                                     'laplacian_', 'spatial_freq_', 'global_entropy',
-                                    'sharpness_', )):
+                                    'sharpness_', 'fwhm_global')):
                 module2_metrics.append(metric_id)
             elif metric_id.startswith(('ssim', 'mse', 'psnr')):
                 module3_metrics.append(metric_id)
@@ -1632,32 +1199,20 @@ class MainFrame(wx.Frame):
                 module1_metrics.append(metric_id)
         
 
-        apply_unwrap = False
-        if zone_metrics:
-            if not self._unwrap_warning_shown:
-                unwrap_dlg = wx.MessageDialog(
-                    self,
-                    "Do you want to apply 'unwrap' (phase unwrapping) to images before zone analysis?\n\n"
-                    "Unwrapping helps remove 2π phase discontinuities but could jeopardize phase compensation.\n\n",
-                    "Apply Phase Unwrapping for Zones",
-                    style=wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION
-                )
-                unwrap_response = unwrap_dlg.ShowModal()
-                unwrap_dlg.Destroy()
-
-                apply_unwrap = (unwrap_response == wx.ID_YES)
-                self._unwrap_warning_shown = True
-                self._unwrap_choice = apply_unwrap
-            else:
-                apply_unwrap = self._unwrap_choice
+        apply_unwrap = self._ask_unwrap_once() if zone_metrics else False
 
         zone_sample = sample  # copia separada para las métricas de zonas
         if apply_unwrap:
             try:
-                zone_sample = rb.unwrap_with_scikit(sample)  # NO pisa 'sample'
+                zone_sample = self._get_unwrapped_sample(image_name, sample)  # NO pisa 'sample'
             except Exception as e:
                 wx.MessageBox(f"Error applying unwrap to {image_name}: {e}", "Error", wx.ICON_ERROR)
                 return masks_cache
+
+        if zone_metrics:
+            # Las metricas de zonas leen de aqui, no de 'sample'
+            masks_cache['zone_sample'] = zone_sample
+            masks_cache['zones_unwrapped'] = apply_unwrap
         
         if module1_metrics:
             needs_unwrapped = any('unwrapped' in mid for mid in module1_metrics)
@@ -1667,35 +1222,19 @@ class MainFrame(wx.Frame):
                 background_mask, threshold, processed_sample = self._get_or_create_background_mask(
                     image_name, sample, needs_unwrap=False
                 )
-                masks_cache[False] = (background_mask, threshold, processed_sample)
-                self._update_tables_with_mask_data(
-                    image_name, sample, background_mask, threshold
-                )
-
-            if needs_unwrapped:
-                cached_entry = self._background_mask_cache.get(image_name)
-                already_cached = (
-                    cached_entry is not None
-                    and cached_entry.get('unwrapped_sample') is not None
-                    and cached_entry['fingerprint'] == self._sample_fingerprint(sample)
-                )
-
-                if not already_cached and not self._unwrap_warning_shown:
-                    unwrap_dlg = wx.MessageDialog(
-                        self,
-                        "Unwrapping helps remove 2π phase discontinuities but could jeopardize phase compensation.",
-                        "Apply Phase Unwrapping for Zones",
-                        wx.OK | wx.ICON_QUESTION
+                if background_mask is not None:
+                    masks_cache[False] = (background_mask, threshold, processed_sample)
+                    self._update_tables_with_mask_data(
+                        image_name, sample, background_mask, threshold
                     )
-                    unwrap_dlg.ShowModal()
-                    unwrap_dlg.Destroy()
-                    self._unwrap_warning_shown = True
 
+            if needs_unwrapped and self._ask_unwrap_once():
                 try:
                     background_mask, threshold, unwrapped_sample = self._get_or_create_background_mask(
                         image_name, sample, needs_unwrap=True
                     )
-                    masks_cache[True] = (background_mask, threshold, unwrapped_sample)
+                    if background_mask is not None:
+                        masks_cache[True] = (background_mask, threshold, unwrapped_sample)
                 except Exception as e:
                     import traceback
                     print(f"[DEBUG] Excepción calculando unwrap para {image_name}:")
@@ -1714,7 +1253,7 @@ class MainFrame(wx.Frame):
                     if num_zones is None:
                         return masks_cache
                     
-                    zones = rb.select_manual_zones(sample, num_zones)
+                    zones = rb.select_manual_zones(zone_sample, num_zones)
                     if not zones or len(zones) == 0:
                         wx.MessageBox("No zones selected.", "Info", wx.ICON_INFORMATION)
                         return masks_cache
@@ -1741,7 +1280,7 @@ class MainFrame(wx.Frame):
                         if num_zones is None:
                             return masks_cache
                         
-                        zones = rb.select_manual_zones(sample, num_zones)
+                        zones = rb.select_manual_zones(zone_sample, num_zones)
                         if not zones or len(zones) == 0:
                             wx.MessageBox(f"No zones selected for {metric_id}.", "Info", wx.ICON_INFORMATION)
                             return masks_cache
@@ -1762,7 +1301,7 @@ class MainFrame(wx.Frame):
                     if num_zones is None:
                         return masks_cache
                     
-                    zones = rb.select_manual_zones(sample, num_zones)
+                    zones = rb.select_manual_zones(zone_sample, num_zones)
                     if not zones or len(zones) == 0:
                         wx.MessageBox(f"No zones selected for {image_name}.", "Info", wx.ICON_INFORMATION)
                         return masks_cache
@@ -1775,25 +1314,42 @@ class MainFrame(wx.Frame):
         return masks_cache
 
 
+    def _skip(self, reason):
+        """
+        Record WHY a metric could not be computed, and return None.
+
+        Every failure path used to be 'except Exception as e: return None',
+        discarding the exception, so the summary only ever said "Skipped" and
+        a cancelled dialog looked exactly like a real bug. The reason is read
+        back by _calculate_multiple_metrics when it builds the report.
+        """
+        self._skip_reason = reason
+        return None
+
     def _calculate_single_metric_cached(self, metric_id, sample, image_name, masks_cache):
         """Calculate a single metric using pre-calculated cached masks."""
         
+        self._skip_reason = None
+
         # Search for metric in the map
         if metric_id not in self.metric_map:
-            return None
+            return self._skip("unknown metric id (not in metric_map)")
         
         metric_func, table_column, needs_unwrap = self.metric_map[metric_id]
+
+        if needs_unwrap and not self._ask_unwrap_once():
+            return self._skip("phase unwrapping was declined for this batch")
         
         # SPECIAL HANDLING FOR LEGENDRE METRICS
         if 'legendre' in metric_id.lower():
             if not self._legendre_params_shown:
                 limit = self._get_limit_from_user(default=64)
                 if limit is None:
-                    return None
+                    return self._skip("Legendre limit dialog was cancelled")
                 
                 ordermax = self._get_legendre_order_from_user(default=5)
                 if ordermax is None:
-                    return None
+                    return self._skip("Legendre limit dialog was cancelled")
                 
                 self._legendre_limit = limit
                 self._legendre_order = ordermax
@@ -1810,7 +1366,7 @@ class MainFrame(wx.Frame):
             # For zone-based Legendre
             if 'zones' in metric_id:
                 if 'zones' not in masks_cache or 'num_zones' not in masks_cache:
-                    return None
+                    return self._skip("Legendre order dialog was cancelled")
                 
                 zones = masks_cache['zones']
                 num_zones = masks_cache['num_zones']
@@ -1822,7 +1378,7 @@ class MainFrame(wx.Frame):
                     if isinstance(result, tuple):
                         mean_coeffs, zone_stats = result
                     else:
-                        return None
+                        return self._skip("Legendre returned no per-zone coefficients")
                     
                     # Add coefficients to table
                     self.ensure_metric_table()
@@ -1837,13 +1393,13 @@ class MainFrame(wx.Frame):
                     
                     return float(np.mean(mean_coeffs))
                 except Exception as e:
-                    return None
+                    return self._skip(f"{type(e).__name__}: {e}")
             
             # For background Legendre (no zones) - USE CACHED MASK
             else:
                 # Get the cached mask (already calculated in _precalculate_masks)
                 if needs_unwrap not in masks_cache:
-                    return None
+                    return self._skip("no background mask: the threshold dialog was cancelled, or unwrapping failed")
                 
                 background_mask, threshold, processed_sample = masks_cache[needs_unwrap]
                 
@@ -1866,7 +1422,7 @@ class MainFrame(wx.Frame):
                     
                     return float(np.mean(coefficients))
                 except Exception as e:
-                    return None
+                    return self._skip(f"{type(e).__name__}: {e}")
         
         # ZONE METRICS: Use cached zones (can be shared, per-image, or per-metric)
         if 'zones' in metric_id:
@@ -1874,23 +1430,26 @@ class MainFrame(wx.Frame):
             if 'metric_zones' in masks_cache:
                 # Per-metric mode: each metric has different zones
                 if metric_id not in masks_cache['metric_zones']:
-                    return None
+                    return self._skip("no zones were selected for this metric")
                 zones, num_zones = masks_cache['metric_zones'][metric_id]
             else:
                 # Shared or per-image mode: all metrics use same zones
                 if 'zones' not in masks_cache or 'num_zones' not in masks_cache:
-                    return None
+                    return self._skip("no zones were selected for this metric")
                 zones = masks_cache['zones']
                 num_zones = masks_cache['num_zones']
             
             # Extract metric name from metric_id (e.g., 'std_zones' -> 'std')
             metric_name = metric_id.split('_')[0].lower()
             
+            # Unwrapped copy if the user asked for it in _precalculate_masks
+            zone_sample = masks_cache.get('zone_sample', sample)
+
             # Calculate metric in each zone
             values = []
             zone_stats = []
             for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
-                zone_img = sample[ymin:ymax, xmin:xmax]
+                zone_img = zone_sample[ymin:ymax, xmin:xmax]
                 val = metric_func(zone_img)
                 values.append(val)
                 zone_stats.append({
@@ -1915,43 +1474,37 @@ class MainFrame(wx.Frame):
         # MODULE 3: Ground-truth metrics (need ground-truth loaded)
         if metric_id.startswith(('ssim', 'mse', 'psnr')):
             if not hasattr(self, 'ground_truth_data') or self.ground_truth_data is None:
-                return None
-            
-            if needs_unwrap:
-                try:
-                    processed_sample = rb.unwrap_with_scikit(sample)
-                except Exception as e:
-                    return None
-            else:
-                processed_sample = sample
+                return self._skip("no ground-truth image loaded")
             
             try:
-                value = metric_func(processed_sample, self.ground_truth_data, use_unwrap=needs_unwrap)
+                # Module 3 never unwraps: see _prepare_sample_and_gt.
+                value = metric_func(sample, self.ground_truth_data)
                 if isinstance(value, tuple):
                     value = value
                 self.update_table_with_zones(image_name, table_column, value)
                 return value
             except Exception as e:
-                return None
+                return self._skip(f"{type(e).__name__}: {e}")
         
         # MODULE 2: Global metrics (NO need mask)
         elif metric_id.startswith(('mmm_', 'gradient_', 'tsm_', 
                                 'laplacian_', 'spatial_freq_', 'global_entropy',
-                                'sharpness_')):
+                                'sharpness_', 'fwhm_global')):
             if needs_unwrap:
                 try:
-                    processed_sample = rb.unwrap_with_scikit(sample)
+                    processed_sample = self._get_unwrapped_sample(image_name, sample)
                 except Exception as e:
-                    return None
+                    return self._skip(f"{type(e).__name__}: {e}")
             else:
                 processed_sample = sample
             
-            import inspect
             params = inspect.signature(metric_func).parameters
             
             try:
                 if 'use_unwrap' in params:
-                    value = metric_func(processed_sample, use_unwrap=needs_unwrap)
+                    # Already unwrapped above when needed: asking again here
+                    # would unwrap twice and change the result.
+                    value = metric_func(processed_sample, use_unwrap=False)
                 else:
                     value = metric_func(processed_sample)
                 
@@ -1961,12 +1514,12 @@ class MainFrame(wx.Frame):
                 self.update_table_with_zones(image_name, table_column, value)
                 return value
             except Exception as e:
-                return None
+                return self._skip(f"{type(e).__name__}: {e}")
         
         # MODULE 1: Background metrics (NEED mask)
         else:
             if needs_unwrap not in masks_cache:
-                return None
+                return self._skip("no background mask: the threshold dialog was cancelled, or unwrapping failed")
             
             background_mask, threshold, processed_sample = masks_cache[needs_unwrap]
             
@@ -1975,90 +1528,8 @@ class MainFrame(wx.Frame):
                 self.update_table_with_zones(image_name, table_column, value)
                 return value
             except Exception as e:
-                return None
+                return self._skip(f"{type(e).__name__}: {e}")
 
-    def _process_global_metric(self, metric_func, metric_name, use_unwrap):
-        # Generic handler for global phase metrics with multi-image selection.
-        # Show image selection dialog
-        selected_indices = show_image_selection_dialog(self, self.notebook)
-        
-        if selected_indices is None:
-            return  # User cancelled
-        
-        # Convert use_unwrap to boolean
-        if isinstance(use_unwrap, str):
-            use_unwrap = use_unwrap.strip().lower() in ("true", "1", "yes", "y", "t")
-        elif use_unwrap is None:
-            use_unwrap = False
-        else:
-            use_unwrap = bool(use_unwrap)
-        
-        # Progress dialog
-        progress = wx.ProgressDialog(
-            "Processing Images",
-            f"Calculating {metric_name}...",
-            maximum=len(selected_indices),
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE | wx.PD_SMOOTH
-        )
-        
-        results = {}
-        
-        try:
-            for idx, img_idx in enumerate(selected_indices):
-                # Get image from tab
-                panel = self.notebook.GetPage(img_idx)
-                pil_img = getattr(panel, 'pil_img', None)
-                name = self.notebook.GetPageText(img_idx)
-                
-                if pil_img is None:
-                    continue
-                
-                # Update progress
-                progress.Update(idx, f"Processing {name}...")
-                
-                # Convert to phase
-                if hasattr(panel, 'is_mat_complex') and panel.is_mat_complex and hasattr(panel, 'phase'):
-                    phase = panel.phase
-                else:
-                    grayscale = pil_img.convert("L")
-                    img_array = np.array(grayscale, dtype=float)
-                    phase = utRBPV.grayscaleToPhase(img_array)
-                
-                # Calculate metric
-                result = metric_func(phase, use_unwrap=use_unwrap)
-                
-                # Extract main value
-                if isinstance(result, tuple):
-                    value = result[0]
-                else:
-                    value = result
-                
-                # Determine suffix dynamically
-                suffix = "_Unwrapped" if use_unwrap else ""
-                full_metric_name = f"{metric_name}{suffix}"
-                
-                # Update table
-                self.update_table_with_zones(name, full_metric_name, value)
-                
-                results[name] = value
-            
-            progress.Update(len(selected_indices))
-            
-        except Exception as e:
-            progress.Destroy()
-            wx.MessageBox(f"Error: {str(e)}", "Error", wx.ICON_ERROR)
-            return
-        finally:
-            progress.Destroy()
-        
-        # Show summary
-        if results:
-            unwrap_text = " (Unwrapped)" if use_unwrap else ""
-            summary = f"{metric_name}{unwrap_text} calculated successfully:\n\n"
-            for img_name, val in results.items():
-                summary += f"{img_name}: {val:.6f}\n"
-            wx.MessageBox(summary, "Analysis Complete", wx.ICON_INFORMATION)
 
     def _sample_fingerprint(self, sample):
         """
@@ -2067,9 +1538,60 @@ class MainFrame(wx.Frame):
         different image reusing the same tab name), so the cached background
         mask can be safely reused when nothing changed.
         """
-        return hashlib.md5(np.ascontiguousarray(sample).tobytes()).hexdigest()
+        arr = np.ascontiguousarray(sample)
+        h = hashlib.md5()
+        h.update(str(arr.shape).encode())
+        h.update(str(arr.dtype).encode())
+        if arr.size > 4_000_000:
+            # Hashing every byte of a 4096x4096 float array costs ~0.3 s and
+            # this runs on every cache lookup. A strided sample plus shape and
+            # dtype is enough to notice that an image was edited or replaced.
+            flat = arr.reshape(-1)
+            h.update(flat[::max(1, flat.size // 1_000_000)].tobytes())
+        else:
+            h.update(arr.tobytes())
+        return h.hexdigest()
     
     
+    # Most recently unwrapped images kept in memory (see _get_unwrapped_sample)
+    _UNWRAPPED_CACHE_SIZE = 2
+
+    def _get_unwrapped_sample(self, image_name, sample):
+        """
+        Unwrap a phase image ONCE per image and reuse the result.
+
+        Unwrapping is by far the most expensive step of the pipeline
+        (~0.85 s for 1920x1200, i.e. 4-40x any single metric), so running
+        it per metric made a batch of 8 unwrapped metrics 16x slower than
+        needed.
+
+        It is also NOT idempotent: skimage's unwrap_phase expects input in
+        [-pi, pi], so feeding it already-unwrapped data changes the values
+        (differences of tens of radians). Everything downstream must
+        therefore receive the cached array with use_unwrap=False, instead
+        of unwrapping here and asking the metric to unwrap again.
+        """
+        fingerprint = self._sample_fingerprint(sample)
+        cached = self._unwrapped_cache.get(image_name)
+        if cached is not None and cached['fingerprint'] == fingerprint:
+            return cached['unwrapped']
+
+        unwrapped = rb.unwrap_with_scikit(sample)
+        self._unwrapped_cache[image_name] = {
+            'fingerprint': fingerprint,
+            'unwrapped': unwrapped,
+        }
+
+        # An unwrapped copy is as large as the phase itself (134 MB for a
+        # 4096x4096 image), so keeping one per open image would cost GBs.
+        # Batches iterate image by image and run every metric of an image
+        # consecutively, so a couple of entries preserve the whole speed-up.
+        while len(self._unwrapped_cache) > self._UNWRAPPED_CACHE_SIZE:
+            self._unwrapped_cache.pop(next(iter(self._unwrapped_cache)))
+
+        return unwrapped
+
+
     def _get_or_create_background_mask(self, image_name, sample, needs_unwrap):
         """
         Return (background_mask, threshold, processed_sample).
@@ -2096,6 +1618,10 @@ class MainFrame(wx.Frame):
             background_mask, threshold = utRBPV.create_background_mask(
                 sample, method='otsu', parent=self
             )
+            if background_mask is None:
+                # User cancelled the threshold dialog: nothing to cache and
+                # no valid mask, so the caller must skip this metric.
+                return None, None, None
             cached = {
                 'fingerprint': fingerprint,
                 'mask': background_mask,
@@ -2105,9 +1631,7 @@ class MainFrame(wx.Frame):
             self._background_mask_cache[image_name] = cached
 
         if needs_unwrap:
-            if cached['unwrapped_sample'] is None:
-                cached['unwrapped_sample'] = rb.unwrap_with_scikit(sample)
-            processed_sample = cached['unwrapped_sample']
+            processed_sample = self._get_unwrapped_sample(image_name, sample)
         else:
             processed_sample = sample
 
@@ -2118,23 +1642,6 @@ class MainFrame(wx.Frame):
     
     # Global Phase Distortion Metrics (Module 2)
 
-    def on_mmm_global(self, event):
-        self._process_global_metric(gp.maximum_minus_minimum, "PV_Global", False)
-
-    def on_mmm_global_unwrapped(self, event):
-        self._process_global_metric(gp.maximum_minus_minimum, "PV_Global_U", True)
-
-    def on_gradient_global(self, event):
-        self._process_global_metric(gp.phase_gradient_prewitt, "Gradient_Global", False)
-  
-    def on_gradient_global_unwrapped(self, event):
-        self._process_global_metric(gp.phase_gradient_prewitt, "Gradient_Global", True)
-             
-    def on_tsm_global(self, event):
-        self._process_global_metric(gp.tsm_global, "TSM_Global", False)
-
-    def on_tsm_global_unwrapped(self, event):
-        self._process_global_metric(gp.tsm_global, "TSM_Global", True)
 
     # def on_curvature_global(self, event):
     #     self._process_global_metric(gp.reconstruction_background, "Legendre coefficients", False)
@@ -2142,94 +1649,7 @@ class MainFrame(wx.Frame):
     # def on_curvature_global_unwrapped(self, event):
     #     self._process_global_metric(gp.reconstruction_background, "Legendre coefficients", True)
 
-    def on_laplacian_global(self, event):
-        self._process_global_metric(gp.laplacian_energy, "Laplacian_Global", False)
 
-    def on_laplacian_global_unwrapped(self, event):
-        self._process_global_metric(gp.laplacian_energy, "Laplacian_Global", True)
-
-    def on_spatial_freq_global(self, event):
-        self._process_global_metric(gp.spatial_frequency_global, "Spatial Frequency", False)
-
-    def on_spatial_freq_global_unwrapped(self, event):
-        self._process_global_metric(gp.spatial_frequency_global, "Spatial Frequency", True)
-
-    def on_global_entropy_global(self, event):
-        self._process_global_metric(gp.global_entropy_global, "Global Entropy", False)
-
-    def on_global_entropy_global_unwrapped(self, event):
-        self._process_global_metric(gp.global_entropy_global, "Global Entropy", True)
-
-    def on_sharpness_global(self, event):
-        self._process_global_metric(gp.sharpness_global, "Global Sharpness", False)
-    
-    def on_sharpness_global_unwrapped(self, event):
-        self._process_global_metric(gp.sharpness_global, "Global Sharpness", True)
-
-    def on_fwhm_resolution_global(self, event):
-        self._process_global_metric(gp.fwhm_resolution_background, "FWHM/Resolution", False)
-
-    def on_fwhm_resolution_global_unwrapped(self, event):
-        self._process_global_metric(gp.fwhm_resolution_background, "FWHM/Resolution", True)
-
-    def on_all_global_metrics_M2(self, event):
-    # Compute all global phase metrics Module 2 (wrapped and unwrapped) at once for the current image.
-        pil_img, name, page = self._get_current_image_data()
-        if pil_img is None:
-            return
-
-        try:
-            phase = self._convert_to_phase(pil_img)
-
-            # List of metrics with display names
-            metrics = [
-                (gp.maximum_minus_minimum, "Peak-to-Valley "),
-                (gp.phase_gradient_prewitt, "Global phase Gradient"),
-                (gp.tsm_global, "TSM"),
-                (gp.laplacian_energy, "Laplacian Energy"),
-                (gp.spatial_frequency_global, "Spatial Frequency"),
-                (gp.global_entropy_global, "Global Entropy"),
-                (gp.sharpness_global, "Sharpness"),
-            ]
-
-            import inspect
-            results_summary = []
-
-            # Calculate each metric with and without unwrap
-            for func, display_name in metrics:
-                for use_unwrap in [False, True]:
-                    try:
-                        # Suffix for display (space instead of underscore)
-                        suffix = " Unwrapped" if use_unwrap else ""
-
-                        # Check if the function accepts use_unwrap
-                        params = inspect.signature(func).parameters
-                        if 'use_unwrap' in params:
-                            result = func(phase, use_unwrap=use_unwrap)
-                        else:
-                            result = func(phase)
-
-                        value = result[0] if isinstance(result, tuple) else result
-
-                        # Update table with full name
-                        full_name = f"{display_name}{suffix}"
-                        self.update_table_with_zones(name, full_name, value)
-
-                        # Save to summary
-                        results_summary.append(f"{full_name}: {value:.6f}")
-
-                    except Exception as metric_err:
-                        results_summary.append(f"{display_name}{suffix}: ERROR ({metric_err})")
-
-            # Show summary box with all results
-            wx.MessageBox(
-                " All global metrics calculated:\n\n" + "\n".join(results_summary),
-                "Global Metrics Summary",
-                wx.ICON_INFORMATION
-            )
-
-        except Exception as e:
-            wx.MessageBox(f"Error calculating metrics:\n{str(e)}", "Error", wx.ICON_ERROR)
     # Finish of module 2
 
 
@@ -2337,324 +1757,5 @@ class MainFrame(wx.Frame):
                 )
                 return False
 
-    def on_ssim_comparison(self, event):
-        # Calculate SSIM between selected images and ground-truth.
-        if not hasattr(self, 'ground_truth_data') or self.ground_truth_data is None:
-            wx.MessageBox("Please load a ground-truth image first", "Error", wx.ICON_ERROR)
-            return
-        
-        # Show image selection dialog
-        selected_indices = show_image_selection_dialog(self, self.notebook)
-        
-        if selected_indices is None:
-            return  # User cancelled
-        
-        # Progress dialog
-        progress = wx.ProgressDialog(
-            "Processing Images",
-            "Calculating SSIM...",
-            maximum=len(selected_indices),
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE | wx.PD_SMOOTH
-        )
-        
-        results = {}
-        
-        try:
-            for idx, img_idx in enumerate(selected_indices):
-                # Get image from tab
-                panel = self.notebook.GetPage(img_idx)
-                pil_img = getattr(panel, 'pil_img', None)
-                name = self.notebook.GetPageText(img_idx)
-                
-                if pil_img is None:
-                    continue
-                
-                # Update progress
-                progress.Update(idx, f"Processing {name}...")
-                
-                # Calculate SSIM
-                ssim_value = gtc.calculate_ssim(pil_img, self.ground_truth_data, use_unwrap=False)
-                self.update_table_with_zones(name, "SSIM", ssim_value)
-                results[name] = ssim_value
-            
-            progress.Update(len(selected_indices))
-            
-        finally:
-            progress.Destroy()
-        
-        # Show summary
-        if results:
-            summary = "SSIM calculation completed:\n\n"
-            for img_name, val in results.items():
-                summary += f"{img_name}: {val:.6f}\n"
-            summary += "\n(1.0 = perfect similarity)"
-            wx.MessageBox(summary, "SSIM Result", wx.ICON_INFORMATION)
 
-    def on_ssim_comparison_unwrapped(self, event):
-        # Calculate SSIM with unwrapping for selected images.
-        if not hasattr(self, 'ground_truth_data') or self.ground_truth_data is None:
-            wx.MessageBox("Please load a ground-truth image first", "Error", wx.ICON_ERROR)
-            return
-        
-        # Show image selection dialog
-        selected_indices = show_image_selection_dialog(self, self.notebook)
-        
-        if selected_indices is None:
-            return  # User cancelled
-        
-        # Progress dialog
-        progress = wx.ProgressDialog(
-            "Processing Images",
-            "Calculating SSIM (Unwrapped)...",
-            maximum=len(selected_indices),
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE | wx.PD_SMOOTH
-        )
-        
-        results = {}
-        
-        try:
-            for idx, img_idx in enumerate(selected_indices):
-                # Get image from tab
-                panel = self.notebook.GetPage(img_idx)
-                pil_img = getattr(panel, 'pil_img', None)
-                name = self.notebook.GetPageText(img_idx)
-                
-                if pil_img is None:
-                    continue
-                
-                # Update progress
-                progress.Update(idx, f"Processing {name}...")
-                
-                # Calculate SSIM with unwrapping
-                ssim_value = gtc.calculate_ssim(pil_img, self.ground_truth_data, use_unwrap=True)
-                self.update_table_with_zones(name, "SSIM_Unwrapped", ssim_value)
-                results[name] = ssim_value
-            
-            progress.Update(len(selected_indices))
-            
-        finally:
-            progress.Destroy()
-        
-        # Show summary
-        if results:
-            summary = "SSIM (Unwrapped) calculation completed:\n\n"
-            for img_name, val in results.items():
-                summary += f"{img_name}: {val:.6f}\n"
-            wx.MessageBox(summary, "SSIM Unwrapped Result", wx.ICON_INFORMATION)
-
-    def on_mse_comparison(self, event):
-    # Calculate MSE between selected images and ground-truth.
-        if not hasattr(self, 'ground_truth_data') or self.ground_truth_data is None:
-            wx.MessageBox("Please load a ground-truth image first", "Error", wx.ICON_ERROR)
-            return
-        
-        # Show image selection dialog
-        selected_indices = show_image_selection_dialog(self, self.notebook)
-        
-        if selected_indices is None:
-            return  # User cancelled
-        
-        # Progress dialog
-        progress = wx.ProgressDialog(
-            "Processing Images",
-            "Calculating MSE...",
-            maximum=len(selected_indices),
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE | wx.PD_SMOOTH
-        )
-        
-        results = {}
-        
-        try:
-            for idx, img_idx in enumerate(selected_indices):
-                # Get image from tab
-                panel = self.notebook.GetPage(img_idx)
-                pil_img = getattr(panel, 'pil_img', None)
-                name = self.notebook.GetPageText(img_idx)
-                
-                if pil_img is None:
-                    continue
-                
-                # Update progress
-                progress.Update(idx, f"Processing {name}...")
-                
-                # Calculate MSE
-                mse_value = gtc.calculate_mse(pil_img, self.ground_truth_data, use_unwrap=False)
-                self.update_table_with_zones(name, "MSE", mse_value)
-                results[name] = mse_value
-            
-            progress.Update(len(selected_indices))
-            
-        finally:
-            progress.Destroy()
-        
-        # Show summary
-        if results:
-            summary = "MSE calculation completed:\n\n"
-            for img_name, val in results.items():
-                summary += f"{img_name}: {val:.6f}\n"
-            summary += "\n(Lower is better)"
-            wx.MessageBox(summary, "MSE Result", wx.ICON_INFORMATION)
-
-    def on_mse_comparison_unwrapped(self, event):
-        # Calculate MSE with unwrapping for selected images.
-        if not hasattr(self, 'ground_truth_data') or self.ground_truth_data is None:
-            wx.MessageBox("Please load a ground-truth image first", "Error", wx.ICON_ERROR)
-            return
-        
-        # Show image selection dialog
-        selected_indices = show_image_selection_dialog(self, self.notebook)
-        
-        if selected_indices is None:
-            return  # User cancelled
-        
-        # Progress dialog
-        progress = wx.ProgressDialog(
-            "Processing Images",
-            "Calculating MSE (Unwrapped)...",
-            maximum=len(selected_indices),
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE | wx.PD_SMOOTH
-        )
-        
-        results = {}
-        
-        try:
-            for idx, img_idx in enumerate(selected_indices):
-                # Get image from tab
-                panel = self.notebook.GetPage(img_idx)
-                pil_img = getattr(panel, 'pil_img', None)
-                name = self.notebook.GetPageText(img_idx)
-                
-                if pil_img is None:
-                    continue
-                
-                # Update progress
-                progress.Update(idx, f"Processing {name}...")
-                
-                # Calculate MSE with unwrapping
-                mse_value = gtc.calculate_mse(pil_img, self.ground_truth_data, use_unwrap=True)
-                self.update_table_with_zones(name, "MSE_Unwrapped", mse_value)
-                results[name] = mse_value
-            
-            progress.Update(len(selected_indices))
-            
-        finally:
-            progress.Destroy()
-        
-        # Show summary
-        if results:
-            summary = "MSE (Unwrapped) calculation completed:\n\n"
-            for img_name, val in results.items():
-                summary += f"{img_name}: {val:.6f}\n"
-            wx.MessageBox(summary, "MSE Unwrapped Result", wx.ICON_INFORMATION)
-
-    def on_psnr_comparison(self, event):
-        # Calculate PSNR between selected images and ground-truth.
-        if not hasattr(self, 'ground_truth_data') or self.ground_truth_data is None:
-            wx.MessageBox("Please load a ground-truth image first", "Error", wx.ICON_ERROR)
-            return
-        
-        # Show image selection dialog
-        selected_indices = show_image_selection_dialog(self, self.notebook)
-        
-        if selected_indices is None:
-            return  # User cancelled
-        
-        # Progress dialog
-        progress = wx.ProgressDialog(
-            "Processing Images",
-            "Calculating PSNR...",
-            maximum=len(selected_indices),
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE | wx.PD_SMOOTH
-        )
-        
-        results = {}
-        
-        try:
-            for idx, img_idx in enumerate(selected_indices):
-                # Get image from tab
-                panel = self.notebook.GetPage(img_idx)
-                pil_img = getattr(panel, 'pil_img', None)
-                name = self.notebook.GetPageText(img_idx)
-                
-                if pil_img is None:
-                    continue
-                
-                # Update progress
-                progress.Update(idx, f"Processing {name}...")
-                
-                # Calculate PSNR
-                psnr_value = gtc.calculate_psnr(pil_img, self.ground_truth_data, use_unwrap=False)
-                self.update_table_with_zones(name, "PSNR", psnr_value)
-                results[name] = psnr_value
-            
-            progress.Update(len(selected_indices))
-            
-        finally:
-            progress.Destroy()
-        
-        # Show summary
-        if results:
-            summary = "PSNR calculation completed:\n\n"
-            for img_name, val in results.items():
-                summary += f"{img_name}: {val:.2f} dB\n"
-            summary += "\n(Higher is better)"
-            wx.MessageBox(summary, "PSNR Result", wx.ICON_INFORMATION)
-
-    def on_psnr_comparison_unwrapped(self, event):
-    # Calculate PSNR with unwrapping for selected images.
-        if not hasattr(self, 'ground_truth_data') or self.ground_truth_data is None:
-            wx.MessageBox("Please load a ground-truth image first", "Error", wx.ICON_ERROR)
-            return
-        
-        # Show image selection dialog
-        selected_indices = show_image_selection_dialog(self, self.notebook)
-        
-        if selected_indices is None:
-            return  # User cancelled
-        
-        # Progress dialog
-        progress = wx.ProgressDialog(
-            "Processing Images",
-            "Calculating PSNR (Unwrapped)...",
-            maximum=len(selected_indices),
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE | wx.PD_SMOOTH
-        )
-        
-        results = {}
-        
-        try:
-            for idx, img_idx in enumerate(selected_indices):
-                # Get image from tab
-                panel = self.notebook.GetPage(img_idx)
-                pil_img = getattr(panel, 'pil_img', None)
-                name = self.notebook.GetPageText(img_idx)
-                
-                if pil_img is None:
-                    continue
-                
-                # Update progress
-                progress.Update(idx, f"Processing {name}...")
-                
-                # Calculate PSNR with unwrapping
-                psnr_value = gtc.calculate_psnr(pil_img, self.ground_truth_data, use_unwrap=True)
-                self.update_table_with_zones(name, "PSNR_Unwrapped", psnr_value)
-                results[name] = psnr_value
-            
-            progress.Update(len(selected_indices))
-            
-        finally:
-            progress.Destroy()
-        
-        # Show summary
-        if results:
-            summary = "PSNR (Unwrapped) calculation completed:\n\n"
-            for img_name, val in results.items():
-                summary += f"{img_name}: {val:.2f} dB\n"
-            wx.MessageBox(summary, "PSNR Unwrapped Result", wx.ICON_INFORMATION)
     # Finish of module 3

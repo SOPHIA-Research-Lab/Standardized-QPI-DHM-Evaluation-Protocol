@@ -1,6 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 from typing import List, Tuple, Optional
 from matplotlib.widgets import Button
 from skimage.restoration import unwrap_phase
@@ -338,7 +337,6 @@ def unwrap_with_scikit(wrapped_phase: np.ndarray) -> np.ndarray:
     return unwrap_phase(wrapped_phase)
 
 
-
 def std_background(img: np.ndarray, mask: Optional[np.ndarray] = None, 
                    manual: bool = False, num_zones: int = 2):
     """Calculate standard deviation of background."""
@@ -360,8 +358,11 @@ def std_background(img: np.ndarray, mask: Optional[np.ndarray] = None,
         return std_mean, zone_stats
 
     values = img[mask] if mask is not None else img.flatten()
-    std_val = float(np.std(values))
-    return round(std_val, 4)
+    # Returned at full precision: this was the only metric in the module that
+    # rounded (to 4 decimals), which hid differences below 1e-4 and did not
+    # even match its own zone branch above, where the mean is not rounded.
+    return float(np.std(values))
+
 
 def mean_absolute_deviation_background(img: np.ndarray, mask: Optional[np.ndarray] = None,
                                        manual: bool = False, num_zones: int = 3):
@@ -388,6 +389,69 @@ def mean_absolute_deviation_background(img: np.ndarray, mask: Optional[np.ndarra
     mean_val = np.mean(values)
     mad = float(np.mean(np.abs(values - mean_val)))
     return mad
+
+
+def mean_background(img: np.ndarray, mask: Optional[np.ndarray] = None,
+                    manual: bool = False, num_zones: int = 3):
+    """
+    Mean phase level of the background (the piston term).
+
+    Reported alongside STD and RMS because the three are tied by an exact
+    identity:
+
+        RMS^2 = mean^2 + STD^2
+
+    RMS is therefore not independent of STD: the only thing it adds is the
+    mean. Measuring that mean explicitly makes the piston visible instead of
+    leaving it buried inside RMS, and lets the three figures be checked
+    against each other.
+
+    Interpretation depends on how the image was loaded:
+
+    - From a complex .mat field the phase is physical, so this is the
+      residual piston left by the compensation. A well compensated
+      background sits near zero.
+    - From an 8-bit image file the phase comes from grayscaleToPhase, a
+      linear remap of intensity to [-pi, pi], so this value tracks the mean
+      brightness of the hologram rather than anything optical.
+
+    Parameters
+    ----------
+    img : ndarray (float)
+        Phase map in radians.
+    mask : ndarray (bool), optional
+        True on background pixels. Whole image when omitted.
+    manual : bool, optional
+        Select rectangular zones interactively (default: False).
+    num_zones : int, optional
+        Number of zones to request when manual is True.
+
+    Returns
+    -------
+    float
+        Mean background phase, in radians, when manual is False.
+    tuple(float, list)
+        Mean over the zones and the per-zone statistics, when manual is True.
+    """
+    if manual:
+        zones = select_manual_zones(img, num_zones)
+        if not zones:
+            return np.nan, []
+
+        zone_stats = []
+        mean_values = []
+
+        for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
+            zone_img = img[ymin:ymax, xmin:xmax]
+            zone_mean = float(np.mean(zone_img))
+            mean_values.append(zone_mean)
+            zone_stats.append({'zone': i, 'mean': zone_mean,
+                               'coords': (xmin, xmax, ymin, ymax)})
+
+        return float(np.mean(mean_values)), zone_stats
+
+    values = img[mask] if mask is not None else img.flatten()
+    return float(np.mean(values))
 
 
 def rms_background(img: np.ndarray, mask: Optional[np.ndarray] = None,
@@ -564,49 +628,6 @@ def entropy_background(img: np.ndarray, mask: Optional[np.ndarray] = None,
     values = img[mask] if mask is not None else img.ravel()
     H = _shannon_entropy(values, bins=bins, base=base)
     return H
-
-
-def spatial_frequency(img: np.ndarray, mask: Optional[np.ndarray] = None,
-                      normalize: bool = True, return_components: bool = False):
-    """Calculate Spatial Frequency (SF) metric."""
-    arr = np.asarray(img, dtype=np.float64)
-    if arr.ndim != 2:
-        raise ValueError("img must be 2D")
-
-    if normalize:
-        vmin = np.nanmin(arr)
-        vmax = np.nanmax(arr)
-        if vmax > vmin:
-            arr = (arr - vmin) / (vmax - vmin)
-
-    M, N = arr.shape
-    if M < 2 and N < 2:
-        return (np.nan, np.nan, np.nan) if return_components else np.nan
-
-    dx = arr[:, 1:] - arr[:, :-1]
-    dy = arr[1:, :] - arr[:-1, :]
-
-    if mask is not None:
-        m = np.asarray(mask, dtype=bool)
-        if m.shape != arr.shape:
-            raise ValueError("Mask shape must match image shape")
-
-        hmask = m[:, 1:] & m[:, :-1]
-        vmask = m[1:, :] & m[:-1, :]
-
-        nh = int(np.count_nonzero(hmask))
-        nv = int(np.count_nonzero(vmask))
-
-        RF = np.sqrt(np.sum((dx[hmask])**2) / nh) if nh > 0 else np.nan
-        CF = np.sqrt(np.sum((dy[vmask])**2) / nv) if nv > 0 else np.nan
-    else:
-        denom_h = M * max(N - 1, 0)
-        denom_v = max(M - 1, 0) * N
-        RF = np.sqrt(np.sum(dx**2) / denom_h) if denom_h > 0 else np.nan
-        CF = np.sqrt(np.sum(dy**2) / denom_v) if denom_v > 0 else np.nan
-
-    SF = np.sqrt(RF**2 + CF**2) if np.isfinite(RF) and np.isfinite(CF) else np.nan
-    return (SF, RF, CF) if return_components else SF
 
 
 def legendre_background(complex_field, mask=None, manual=False, num_zones=2, 

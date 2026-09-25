@@ -39,6 +39,7 @@ def create(parent_frame, notebook=None):
     parent_frame.star_150nm_mat_id = wx.NewIdRef()
     parent_frame.star_150nm_img_id = wx.NewIdRef()
     parent_frame.Nstar_mat_id = wx.NewIdRef()
+    parent_frame.NsredBlood_mat_id = wx.NewIdRef()
     parent_frame.probiotics_mat_id = wx.NewIdRef()
 
     #Telecentric_submenu.Append(parent_frame.usaf_150nm_mat_id, "USAF - 150 nm (.mat)")
@@ -46,7 +47,7 @@ def create(parent_frame, notebook=None):
     #Telecentric_submenu.Append(parent_frame.star_150nm_mat_id, "Star - 150 nm (.mat)")
     Telecentric_submenu.Append(parent_frame.star_150nm_img_id, "Star (.bmp)")
     NTelecentric_submenu.Append(parent_frame.Nstar_mat_id, "No telecentric Star (.tiff)")
-    NTelecentric_submenu.Append(parent_frame.Nstar_mat_id, "Red blood cells (.tiff)")
+    NTelecentric_submenu.Append(parent_frame.NsredBlood_mat_id, "Red blood cells (.tiff)")
     Telecentric_submenu.Append(parent_frame.probiotics_mat_id, "Probiotics (.bmp)")
 
     samples_menu.AppendSubMenu(Telecentric_submenu, "Telecentric")
@@ -71,7 +72,7 @@ def create(parent_frame, notebook=None):
                       id=parent_frame.Nstar_mat_id)
     parent_frame.Bind(wx.EVT_MENU,
                           lambda evt: load_sample(parent_frame, notebook, "No Telecentric", "NredBlood_40x_632_4.65_30mm.tiff", "Red Blood Cells (.tiff)"),
-                          id=parent_frame.Nstar_mat_id)
+                          id=parent_frame.NsredBlood_mat_id)
     parent_frame.Bind(wx.EVT_MENU,
                           lambda evt: load_sample(parent_frame, notebook, "Telecentric", "T_Probiotics_20x_632_3.75.bmp", "Probiotics (.bmp)"),
                           id=parent_frame.probiotics_mat_id)

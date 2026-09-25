@@ -9,8 +9,10 @@ def open_image(parent, notebook):
     """Open image or .mat file, convert to phase if needed, and display in a new notebook tab."""
     
     wildcard = (
-        "Supported files (*.png;*.jpg;*.jpeg;*.bmp;*.mat)|*.png;*.jpg;*.jpeg;*.bmp;*.mat|"
-        "Image files (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp|"
+        "Supported files (*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.mat)|"
+        "*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.mat|"
+        "Image files (*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff)|"
+        "*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff|"
         "MATLAB files (*.mat)|*.mat"
     )
 
@@ -28,9 +30,9 @@ def open_image(parent, notebook):
 
             try:
                 # -------------------------------------------------------
-                # CASE 1: Standard image (PNG, JPG, BMP, etc.)
+                # CASE 1: Standard image (PNG, JPG, BMP, TIFF, etc.)
                 # -------------------------------------------------------
-                if ext in [".png", ".jpg", ".jpeg", ".bmp"]:
+                if ext in [".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"]:
                     img = Image.open(path).convert("L")
                     img_array = np.array(img, dtype=float)
 

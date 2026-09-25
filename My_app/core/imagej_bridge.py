@@ -47,9 +47,6 @@ def _load_saved_path():
             pass
     return None
 
-def is_imagej_started():
-    """Returns True only if ImageJ has already been successfully initialized."""
-    return _ij_initialized
 
 def _save_path(path):
     """Saves the Fiji path for future runs."""
@@ -140,7 +137,6 @@ def show_imagej_gui(parent_window=None):
     _ensure_imagej_started(parent_window)
 
 
-
     if _ij_frame is not None:
         if not _ij_frame.isVisible():
             _ij_frame.setVisible(True)
@@ -214,19 +210,6 @@ def pil_to_imageplus(pil_img: Image.Image, title="FromApp", parent_window=None):
     _active_images[title] = imp
     _last_hash[title] = None
     return imp
-
-
-def get_current_imagej_image_as_pil():
-    """Retrieves the currently active ImageJ image and converts it to PIL."""
-    _ensure_imagej_started()
-
-    active_image = WindowManager.getCurrentImage()
-    if active_image is None:
-        return None, None
-
-    pil_img = _imageplus_to_pil(active_image)
-    title = str(active_image.getTitle())
-    return pil_img, title
 
 
 def _imageplus_to_pil(imp):
