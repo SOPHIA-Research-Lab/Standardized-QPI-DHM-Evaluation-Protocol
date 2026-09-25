@@ -13,6 +13,11 @@ from analysis.module1 import utilitiesRBPV as utRBPV
 from analysis.module1 import residual_background as rb
 from analysis.module2 import global_phase as gp
 from analysis.module3 import ground_truth_comparison as gtc
+from analysis.catalog import METRIC_MAP
+from analysis.cache import AnalysisCache
+from ui.zone_selector import select_manual_zones
+from ui.threshold_dialog import create_background_mask
+from ui.legendre_viewer import show_legendre_reconstruction
 import matplotlib.pyplot as plt
 import subprocess
 import sys
@@ -39,10 +44,15 @@ class MainFrame(wx.Frame):
         self.is_sample_image = False
         self.ground_truth_path = None
         self.ground_truth_data = None
-        self._zones_cache = {} 
-        self._shared_zones = None  
-        self._background_mask_cache = {}
-        self._unwrapped_cache = {}
+        # Masks, zone selections and unwrapped phase: one object, one
+        # lifecycle. They used to be four attributes purged by hand.
+        self._cache = AnalysisCache()
+        # Raw, unrounded values behind each cell, keyed by image name and
+        # column name. The tables show 4 decimals for readability; the export
+        # must not inherit that truncation, and it used to because it read the
+        # cell TEXT back out of the widget.
+        self._metric_values = {}
+        self._mask_values = {}
         self._skip_reason = None
         self._unwrap_warning_shown = False
         self._unwrap_choice = False
@@ -52,100 +62,9 @@ class MainFrame(wx.Frame):
         self.CreateStatusBar()
         
         # Metric IDs to functions mapping
-        self.metric_map = {
-            # ===== MODULE 1: Residual Background Phase Variance =====
-            # STD metrics
-            'std_unwrapped': (rb.std_background, 'STD_U_B [rad]', True),
-            'std_background': (rb.std_background, 'STD_B [rad]', False),
-            'std_zones': (rb.std_background, 'STD_Zones [rad]', False),
-            
-            # MAD metrics
-            'mad_unwrapped': (rb.mean_absolute_deviation_background, 'MAD_U_B [rad]', True),
-            'mad_background': (rb.mean_absolute_deviation_background, 'MAD_B [rad]', False),
-            'mad_zones': (rb.mean_absolute_deviation_background, 'MAD_Zones [rad]', False),
-            
-            # Mean (piston). RMS^2 = mean^2 + STD^2, so this is exactly the
-            # information RMS adds over STD.
-            'mean_unwrapped': (rb.mean_background, 'Mean_U_B [rad]', True),
-            'mean_background': (rb.mean_background, 'Mean_B [rad]', False),
-            'mean_zones': (rb.mean_background, 'Mean_Zones [rad]', False),
-
-            # RMS metrics
-            'rms_unwrapped': (rb.rms_background, 'RMS_U_B [rad]', True),
-            'rms_background': (rb.rms_background, 'RMS_B [rad]', False),
-            'rms_zones': (rb.rms_background, 'RMS_Zones [rad]', False),
-            
-            # PV metrics
-            'pv_unwrapped': (rb.pv_background, 'PV_U_B [rad]', True),
-            'pv_background': (rb.pv_background, 'PV_B [rad]', False),
-            'pv_zones': (rb.pv_background, 'PV_Zones [rad]', False),
-            
-            # FWHM metrics
-            'fwhm_unwrapped': (rb.fwhm_background, 'FWHM_U_B [rad]', True),
-            'fwhm_background': (rb.fwhm_background, 'FWHM_B [rad]', False),
-            'fwhm_zones': (rb.fwhm_background, 'FWHM_Zones [rad]', False),
-            
-            # Entropy metrics
-            'entropy_unwrapped': (rb.entropy_background, 'Entropy_U_B [bits]', True),
-            'entropy_background': (rb.entropy_background, 'Entropy_B [bits]', False),
-            'entropy_zones': (rb.entropy_background, 'Entropy_Zones [bits]', False),
-            
-            # Legendre metrics 
-            'legendre_background': (rb.legendre_background, 'Legendre-B [rad]', False),
-            'legendre_unwrapped': (rb.legendre_background, 'Legendre-U_B [rad]', True),
-            'legendre_zones': (rb.legendre_background, 'Legendre_Zones [rad]', False),
-
-            
-            # ===== MODULE 2: Global Phase Distortion Metrics =====
-            
-            #  PV metrics
-            'mmm_global': (gp.maximum_minus_minimum, 'PV_Global [rad]', False),
-            'mmm_unwrapped': (gp.maximum_minus_minimum, 'PV_Global_U [rad]', True),
-            
-            # Phase Gradient
-            'gradient_global': (gp.phase_gradient_prewitt, 'GPG_Global [rad/px]', False),
-            'gradient_unwrapped': (gp.phase_gradient_prewitt, 'GPG_Unwrapped [rad/px]', True),
-            
-            # TSM
-            'tsm_global': (gp.tsm_global, 'TSM_Global [%]', False),
-            'tsm_unwrapped': (gp.tsm_global, 'TSM_Unwrapped [%]', True),
-            
-            # # Phase Curvature
-            # 'curvature_global': (gp.reconstruction_background, 'Curvature_Global', False),
-            # 'curvature_unwrapped': (gp.reconstruction_background, 'Curvature_Unwrapped', True),
-            
-            # Laplacian Energy
-            'laplacian_global': (gp.laplacian_energy, 'LE_Global [rad^2/px^4]', False),
-            'laplacian_unwrapped': (gp.laplacian_energy, 'LE_Unwrapped [rad^2/px^4]', True),
-            
-            # Spatial Frequency
-            'spatial_freq_global': (gp.spatial_frequency_global, 'SF_Global [rad]', False),
-            'spatial_freq_unwrapped': (gp.spatial_frequency_global, 'SF_Unwrapped [rad]', True),
-            
-            # Global Entropy
-            'global_entropy': (gp.global_entropy_global, 'Entropy_Global [bits]', False),
-            'global_entropy_unwrapped': (gp.global_entropy_global, 'Entropy_Unwrapped [bits]', True),
-            
-            # GSM
-            'sharpness_global': (gp.sharpness_global, 'GSM_Global', False),
-            'sharpness_unwrapped': (gp.sharpness_global, 'GSM_Unwrapped', True),
-
-            # FWHM/Resolution
-            'fwhm_global': (gp.fwhm_global, 'FWHM_Global [rad]', False),
-            'fwhm_global_unwrapped': (gp.fwhm_global, 'FWHM_Global_U [rad]', True),
-
-            
-            # ===== MODULE 3: Ground-Truth Comparisons =====
-            
-            # SSIM
-            'ssim': (gtc.calculate_ssim, 'SSIM', False),
-            
-            # MSE
-            'mse': (gtc.calculate_mse, 'MSE', False),
-            
-            # PSNR
-            'psnr': (gtc.calculate_psnr, 'PSNR', False),
-        }
+        # The catalogue lives in analysis/catalog.py: it defines the
+        # protocol, not this window. Read-only here.
+        self.metric_map = METRIC_MAP
 
     def on_check_imagej_updates(self, event):
         """Periodically checks if the user edited any image inside ImageJ."""
@@ -319,6 +238,14 @@ class MainFrame(wx.Frame):
                 return i
         return -1
 
+    @staticmethod
+    def _record_value(store, image_name, col_name, value):
+        """Keep the full-precision number behind a formatted cell."""
+        try:
+            store.setdefault(image_name, {})[col_name] = float(value)
+        except (TypeError, ValueError):
+            pass
+
     def _find_or_create_row(self, image_name):
         if not self.metric_table:
             return 0
@@ -346,6 +273,7 @@ class MainFrame(wx.Frame):
         
         # Write metric value
         self.metric_table.SetItem(row, col_idx, f"{value:.4f}")
+        self._record_value(self._metric_values, image_name, metric_column, value)
         
         if zone_stats:
             self._update_zone_columns_dynamic(row, zone_stats, metric_column, num_zones)
@@ -402,6 +330,8 @@ class MainFrame(wx.Frame):
                 val = float(np.mean(val)) if not np.isscalar(val) else float(val)
                 if np.isfinite(val):
                     self.metric_table.SetItem(row, col_indices[col_name], f"{val:.4f}")
+                    nombre_img = self.metric_table.GetItemText(row, 0)
+                    self._record_value(self._metric_values, nombre_img, col_name, val)
             except (ValueError, TypeError) as e:
                 print(f" Error setting value for {col_name}: {e}")
                 continue
@@ -472,6 +402,13 @@ class MainFrame(wx.Frame):
             f"{bg_percent:.1f}%", f"{sample_pixels}",
             f"{sample_percent:.1f}%",
         ]
+        for col_name, valor in (("Threshold", threshold),
+                                ("Total Pixels", total_pixels),
+                                ("Background Pixels", background_pixels),
+                                ("Background %", bg_percent),
+                                ("Sample Pixels", sample_pixels),
+                                ("Sample %", sample_percent)):
+            self._record_value(self._mask_values, image_name, col_name, valor)
 
         if found_row is not None:
             for col, value in enumerate(data, start=1):
@@ -568,9 +505,9 @@ class MainFrame(wx.Frame):
         self._close_detached_windows()
         self._destroy_tables()
 
-        self._zones_cache.clear()
-        self._background_mask_cache.clear()
-        self._unwrapped_cache.clear()
+        self._cache.clear()
+        self._metric_values.clear()
+        self._mask_values.clear()
 
         self.is_sample_image = False
         self.Layout()
@@ -599,33 +536,53 @@ class MainFrame(wx.Frame):
     def on_metric_table_context_menu(self, event):
         # Show context menu for metrics table.
         menu = wx.Menu()
-        export_csv = menu.Append(wx.ID_ANY, "Export All Tables to CSV")
+        solo_excel = menu.Append(wx.ID_ANY, "Export Metrics table to Excel")
+        solo_csv = menu.Append(wx.ID_ANY, "Export Metrics table to CSV")
+        menu.AppendSeparator()
         export_excel = menu.Append(wx.ID_ANY, "Export All Tables to Excel")
+        export_csv = menu.Append(wx.ID_ANY, "Export All Tables to CSV")
 
-        self.Bind(wx.EVT_MENU, self.on_export_all_csv, export_csv)
+        self.Bind(wx.EVT_MENU, self.on_export_metrics_excel, solo_excel)
+        self.Bind(wx.EVT_MENU, self.on_export_metrics_csv, solo_csv)
         self.Bind(wx.EVT_MENU, self.on_export_all_excel, export_excel)
+        self.Bind(wx.EVT_MENU, self.on_export_all_csv, export_csv)
         self.PopupMenu(menu)
         menu.Destroy()
 
     def on_mask_table_context_menu(self, event):
         # Show context menu for mask table.
         menu = wx.Menu()
-        export_csv = menu.Append(wx.ID_ANY, "Export All Tables to CSV")
+        solo_excel = menu.Append(wx.ID_ANY, "Export Mask table to Excel")
+        solo_csv = menu.Append(wx.ID_ANY, "Export Mask table to CSV")
+        menu.AppendSeparator()
         export_excel = menu.Append(wx.ID_ANY, "Export All Tables to Excel")
+        export_csv = menu.Append(wx.ID_ANY, "Export All Tables to CSV")
 
-        self.Bind(wx.EVT_MENU, self.on_export_all_csv, export_csv)
+        self.Bind(wx.EVT_MENU, self.on_export_mask_excel, solo_excel)
+        self.Bind(wx.EVT_MENU, self.on_export_mask_csv, solo_csv)
         self.Bind(wx.EVT_MENU, self.on_export_all_excel, export_excel)
+        self.Bind(wx.EVT_MENU, self.on_export_all_csv, export_csv)
 
         self.PopupMenu(menu)
         menu.Destroy()
 
-    def export_all_tables(self, file_format, event=None):
-        """Export all tables that contain data."""
+    def export_all_tables(self, file_format, event=None, only=None):
+        """
+        Export the result tables.
 
+        Parameters
+        ----------
+        file_format : {'excel', 'csv'}
+        only : tuple of str, optional
+            Restrict the export to these tables ("Metrics", "Mask Data").
+            Omitted, every table holding data is exported.
+        """
         table_info = {
             "Metrics": (self.metric_table, self._get_metric_table_data),
             "Mask Data": (self.mask_table, self._get_mask_table_data),
         }
+        if only:
+            table_info = {k: v for k, v in table_info.items() if k in only}
 
         # Check if there is at least one table with data
         has_data = any(
@@ -744,35 +701,57 @@ class MainFrame(wx.Frame):
     def on_export_all_csv(self, event):
         self.export_all_tables("csv")
 
+    def on_export_metrics_excel(self, event):
+        self.export_all_tables("excel", only=("Metrics",))
+
+    def on_export_metrics_csv(self, event):
+        self.export_all_tables("csv", only=("Metrics",))
+
+    def on_export_mask_excel(self, event):
+        self.export_all_tables("excel", only=("Mask Data",))
+
+    def on_export_mask_csv(self, event):
+        self.export_all_tables("csv", only=("Mask Data",))
+
 
     def _get_metric_table_data(self):
         # Extract metrics table data for export.
         if self.metric_table is None:
             return []
         
-        return [
-            {
-                self.metric_table.GetColumn(col).GetText(): self.metric_table.GetItemText(row, col)
-                for col in range(self.metric_table.GetColumnCount())
-            }
-            for row in range(self.metric_table.GetItemCount())
-        ]
+        return self._table_rows(self.metric_table, self._metric_values)
+
+    def _table_rows(self, table, raw_store):
+        """
+        Build the export rows, preferring the stored full-precision number over
+        the text shown in the cell. Columns with no raw value (image name, zone
+        coordinates) fall back to the displayed text.
+        """
+        filas = []
+        n_cols = table.GetColumnCount()
+        nombres = [table.GetColumn(c).GetText() for c in range(n_cols)]
+
+        for row in range(table.GetItemCount()):
+            nombre_img = table.GetItemText(row, 0)
+            crudos = raw_store.get(nombre_img, {})
+            fila = {}
+            for col, col_name in enumerate(nombres):
+                texto = table.GetItemText(row, col)
+                if col_name in crudos and texto != "":
+                    fila[col_name] = crudos[col_name]
+                else:
+                    fila[col_name] = texto
+            filas.append(fila)
+        return filas
 
     def _get_mask_table_data(self):
         # Extract mask table data for export.
         if self.mask_table is None:
             return []
-            
-        column_names = [
-            "Image Name", "Threshold", "Total Pixels", "Background Pixels",
-            "Background %", "Sample Pixels", "Sample %"
-        ]
-        
-        return [
-            {col_name: self.mask_table.GetItemText(row, col) 
-             for col, col_name in enumerate(column_names)}
-            for row in range(self.mask_table.GetItemCount())
-        ]
+
+        # Column names now come from the widget itself. They match the list this
+        # used to hardcode, and can no longer drift apart from it.
+        return self._table_rows(self.mask_table, self._mask_values)
 
     # Tab and window management
     def on_tab_change(self, event):
@@ -797,16 +776,15 @@ class MainFrame(wx.Frame):
     def _handle_tab_close_cleanup(self, closed_image_name=None):
 
         if closed_image_name:
-            self._background_mask_cache.pop(closed_image_name, None)
-            self._unwrapped_cache.pop(closed_image_name, None)
+            self._cache.forget_image(closed_image_name)
             
             # Also clear any per-image zone selections tied to this image
             keys_to_remove = [
-                k for k in self._zones_cache
+                k for k in self._cache.zones
                 if k == f"{closed_image_name}_zones" or k.startswith(f"{closed_image_name}_")
             ]
             for k in keys_to_remove:
-                del self._zones_cache[k]
+                del self._cache.zones[k]
         
         # Execute after closing a tab. Clean up if no images remain.
         page_count = self.notebook.GetPageCount()
@@ -1069,16 +1047,13 @@ class MainFrame(wx.Frame):
                 return
             
             # Initialize zones cache for this session
-            if not hasattr(self, '_zones_cache'):
-                self._zones_cache = {}
             
             # If shared mode, clear cache to start fresh and reset shared zones
             if zones_mode == 'shared':
-                self._zones_cache.clear()
-                self._shared_zones = None  # Will be set on first image
+                self._cache.reset_zones(shared=True)
             # If per-image or per-metric mode, clear cache for fresh zones
             else:
-                self._zones_cache.clear()
+                self._cache.reset_zones()
         
         total_operations = len(metrics_dict) * len(image_indices)
         
@@ -1088,15 +1063,25 @@ class MainFrame(wx.Frame):
             "Processing...",
             maximum=total_operations,
             parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE | wx.PD_SMOOTH
+            # PD_CAN_ABORT gives the dialog a Cancel button, and Update() then
+            # reports whether it was pressed. Without it, a long batch could
+            # only be stopped by killing the process.
+            # No PD_REMAINING_TIME: wx estimates it from the progress rate and
+            # shows "Unknown" until it has enough samples, which for a short
+            # batch is the whole run.
+            style=(wx.PD_APP_MODAL | wx.PD_AUTO_HIDE | wx.PD_SMOOTH
+                   | wx.PD_CAN_ABORT | wx.PD_ELAPSED_TIME)
         )
         
         current_op = 0
         results_summary = []
+        cancelado = False
         
         try:
             # Process each image
             for img_idx in image_indices:
+                if cancelado:
+                    break
                 panel = self.notebook.GetPage(img_idx)
                 pil_img = getattr(panel, 'pil_img', None)
                 name = self.notebook.GetPageText(img_idx)
@@ -1125,10 +1110,19 @@ class MainFrame(wx.Frame):
                 
                 # 3️⃣ Calculate each metric using the cache
                 for metric_id, metric_label in metrics_dict.items():
-                    progress.Update(
+                    # Update() refreshes the bar (which pumps the event loop, so
+                    # the window keeps repainting) and reports Cancel presses.
+                    seguir, _ = progress.Update(
                         current_op,
                         f"Calculating {metric_label} for {name}..."
                     )
+                    if not seguir:
+                        cancelado = True
+                        results_summary.append(
+                            "\n*** Cancelled by the user. Everything above was "
+                            "already written to the table. ***"
+                        )
+                        break
                     
                     try:
                         value = self._calculate_single_metric_cached(
@@ -1154,7 +1148,8 @@ class MainFrame(wx.Frame):
                     
                     current_op += 1
             
-            progress.Update(total_operations)
+            if not cancelado:
+                progress.Update(total_operations)
         
         finally:
             progress.Destroy()
@@ -1166,7 +1161,7 @@ class MainFrame(wx.Frame):
             dlg = wx.lib.dialogs.ScrolledMessageDialog(
                 self,
                 summary_text,
-                "Metrics Calculation Complete",
+                "Metrics Calculation Cancelled" if cancelado else "Metrics Calculation Complete",
                 size=(600, 400)
             )
             dlg.ShowModal()
@@ -1247,21 +1242,21 @@ class MainFrame(wx.Frame):
             
             if zones_mode == 'shared':
                 # SHARED MODE: Use same zones for all images and all metrics
-                if self._shared_zones is None:
+                if self._cache.shared_zones is None:
                     # First image: ask for zones
                     num_zones = self._get_zone_count_from_user()
                     if num_zones is None:
                         return masks_cache
                     
-                    zones = rb.select_manual_zones(zone_sample, num_zones)
+                    zones = select_manual_zones(zone_sample, num_zones)
                     if not zones or len(zones) == 0:
                         wx.MessageBox("No zones selected.", "Info", wx.ICON_INFORMATION)
                         return masks_cache
                     
                     # Save as shared zones
-                    self._shared_zones = (zones, num_zones)
+                    self._cache.shared_zones = (zones, num_zones)
                 else:
-                    zones, num_zones = self._shared_zones
+                    zones, num_zones = self._cache.shared_zones
                 
                 masks_cache['zones'] = zones
                 masks_cache['num_zones'] = num_zones
@@ -1273,19 +1268,19 @@ class MainFrame(wx.Frame):
                 for metric_id in zone_metrics:
                     cache_key = f"{image_name}_{metric_id}"
                     
-                    if cache_key in self._zones_cache:
-                        zones, num_zones = self._zones_cache[cache_key]
+                    if cache_key in self._cache.zones:
+                        zones, num_zones = self._cache.zones[cache_key]
                     else:
                         num_zones = self._get_zone_count_from_user()
                         if num_zones is None:
                             return masks_cache
                         
-                        zones = rb.select_manual_zones(zone_sample, num_zones)
+                        zones = select_manual_zones(zone_sample, num_zones)
                         if not zones or len(zones) == 0:
                             wx.MessageBox(f"No zones selected for {metric_id}.", "Info", wx.ICON_INFORMATION)
                             return masks_cache
                         
-                        self._zones_cache[cache_key] = (zones, num_zones)
+                        self._cache.zones[cache_key] = (zones, num_zones)
                     
                     metric_zones[metric_id] = (zones, num_zones)
                 
@@ -1294,19 +1289,19 @@ class MainFrame(wx.Frame):
             else:  # PER-IMAGE MODE
                 cache_key = f"{image_name}_zones"
                 
-                if cache_key in self._zones_cache:
-                    zones, num_zones = self._zones_cache[cache_key]
+                if cache_key in self._cache.zones:
+                    zones, num_zones = self._cache.zones[cache_key]
                 else:
                     num_zones = self._get_zone_count_from_user()
                     if num_zones is None:
                         return masks_cache
                     
-                    zones = rb.select_manual_zones(zone_sample, num_zones)
+                    zones = select_manual_zones(zone_sample, num_zones)
                     if not zones or len(zones) == 0:
                         wx.MessageBox(f"No zones selected for {image_name}.", "Info", wx.ICON_INFORMATION)
                         return masks_cache
                     
-                    self._zones_cache[cache_key] = (zones, num_zones)
+                    self._cache.zones[cache_key] = (zones, num_zones)
                 
                 masks_cache['zones'] = zones
                 masks_cache['num_zones'] = num_zones
@@ -1405,8 +1400,13 @@ class MainFrame(wx.Frame):
                 
                 try:
                     # Calculate Legendre coefficients using the CACHED mask
-                    coefficients = metric_func(processed_sample, background_mask, manual=False,
-                                            num_zones=2, limit=limit, order_max=ordermax)
+                    coefficients = metric_func(
+                        processed_sample, background_mask, manual=False,
+                        num_zones=2, limit=limit, order_max=ordermax,
+                        # The analysis layer no longer knows about viewers:
+                        # it hands the surface back here to be displayed.
+                        show_reconstruction=show_legendre_reconstruction,
+                    )
                     
                     # Add coefficients to table
                     self.ensure_metric_table()
@@ -1524,7 +1524,10 @@ class MainFrame(wx.Frame):
             background_mask, threshold, processed_sample = masks_cache[needs_unwrap]
             
             try:
-                value = metric_func(processed_sample, background_mask, manual=False, num_zones=2)  # ✅ usa 'processed_sample'
+                # Module 1 metrics take (image, mask). The manual/num_zones
+                # parameters they used to carry were for a zone branch that
+                # this frame has handled itself for a long time.
+                value = metric_func(processed_sample, background_mask)
                 self.update_table_with_zones(image_name, table_column, value)
                 return value
             except Exception as e:
@@ -1553,9 +1556,6 @@ class MainFrame(wx.Frame):
         return h.hexdigest()
     
     
-    # Most recently unwrapped images kept in memory (see _get_unwrapped_sample)
-    _UNWRAPPED_CACHE_SIZE = 2
-
     def _get_unwrapped_sample(self, image_name, sample):
         """
         Unwrap a phase image ONCE per image and reuse the result.
@@ -1572,24 +1572,14 @@ class MainFrame(wx.Frame):
         of unwrapping here and asking the metric to unwrap again.
         """
         fingerprint = self._sample_fingerprint(sample)
-        cached = self._unwrapped_cache.get(image_name)
-        if cached is not None and cached['fingerprint'] == fingerprint:
-            return cached['unwrapped']
+        cached = self._cache.get_unwrapped(image_name, fingerprint)
+        if cached is not None:
+            return cached
 
-        unwrapped = rb.unwrap_with_scikit(sample)
-        self._unwrapped_cache[image_name] = {
-            'fingerprint': fingerprint,
-            'unwrapped': unwrapped,
-        }
-
-        # An unwrapped copy is as large as the phase itself (134 MB for a
-        # 4096x4096 image), so keeping one per open image would cost GBs.
-        # Batches iterate image by image and run every metric of an image
-        # consecutively, so a couple of entries preserve the whole speed-up.
-        while len(self._unwrapped_cache) > self._UNWRAPPED_CACHE_SIZE:
-            self._unwrapped_cache.pop(next(iter(self._unwrapped_cache)))
-
-        return unwrapped
+        # Eviction is the cache's business, not this method's.
+        return self._cache.store_unwrapped(
+            image_name, fingerprint, rb.unwrap_with_scikit(sample)
+        )
 
 
     def _get_or_create_background_mask(self, image_name, sample, needs_unwrap):
@@ -1610,12 +1600,12 @@ class MainFrame(wx.Frame):
         phase unwrapping unnecessarily either.
         """
         fingerprint = self._sample_fingerprint(sample)
-        cached = self._background_mask_cache.get(image_name)
+        cached = self._cache.masks.get(image_name)
 
         if cached is None or cached['fingerprint'] != fingerprint:
             # New image, or this image's data changed: (re)compute Otsu
             # exactly once, always on the original (wrapped) sample.
-            background_mask, threshold = utRBPV.create_background_mask(
+            background_mask, threshold = create_background_mask(
                 sample, method='otsu', parent=self
             )
             if background_mask is None:
@@ -1626,9 +1616,8 @@ class MainFrame(wx.Frame):
                 'fingerprint': fingerprint,
                 'mask': background_mask,
                 'threshold': threshold,
-                'unwrapped_sample': None,
             }
-            self._background_mask_cache[image_name] = cached
+            self._cache.masks[image_name] = cached
 
         if needs_unwrap:
             processed_sample = self._get_unwrapped_sample(image_name, sample)

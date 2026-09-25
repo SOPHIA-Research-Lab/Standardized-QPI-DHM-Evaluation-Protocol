@@ -1,0 +1,118 @@
+"""
+Catalogue of the metrics the protocol offers.
+
+Lives outside the UI on purpose: it is the definition of the protocol, not a
+detail of the window that happens to display it.
+
+Note this module still pulls wx in transitively: residual_background and
+utilitiesRBPV import it for the zone selector and the threshold dialog. Making
+the catalogue usable from a headless script means moving those dialogs out of
+the analysis layer first.
+
+Each entry maps a metric id to:
+
+    (function, table column label, needs unwrapped phase)
+
+The id is what the selection dialogs hand back; the column label is what the
+results table and the exported file show.
+"""
+from analysis.module1 import residual_background as rb
+from analysis.module2 import global_phase as gp
+from analysis.module3 import ground_truth_comparison as gtc
+
+
+METRIC_MAP = {
+
+    # ===== MODULE 1: Residual Background Phase Variance =====
+    # STD metrics
+    'std_unwrapped': (rb.std_background, 'STD_U_B [rad]', True),
+    'std_background': (rb.std_background, 'STD_B [rad]', False),
+    'std_zones': (rb.std_background, 'STD_Zones [rad]', False),
+
+    # MAD metrics
+    'mad_unwrapped': (rb.mean_absolute_deviation_background, 'MAD_U_B [rad]', True),
+    'mad_background': (rb.mean_absolute_deviation_background, 'MAD_B [rad]', False),
+    'mad_zones': (rb.mean_absolute_deviation_background, 'MAD_Zones [rad]', False),
+
+    # Mean (piston). RMS^2 = mean^2 + STD^2, so this is exactly the
+    # information RMS adds over STD.
+    'mean_unwrapped': (rb.mean_background, 'Mean_U_B [rad]', True),
+    'mean_background': (rb.mean_background, 'Mean_B [rad]', False),
+    'mean_zones': (rb.mean_background, 'Mean_Zones [rad]', False),
+
+    # RMS metrics
+    'rms_unwrapped': (rb.rms_background, 'RMS_U_B [rad]', True),
+    'rms_background': (rb.rms_background, 'RMS_B [rad]', False),
+    'rms_zones': (rb.rms_background, 'RMS_Zones [rad]', False),
+
+    # PV metrics
+    'pv_unwrapped': (rb.pv_background, 'PV_U_B [rad]', True),
+    'pv_background': (rb.pv_background, 'PV_B [rad]', False),
+    'pv_zones': (rb.pv_background, 'PV_Zones [rad]', False),
+
+    # FWHM metrics
+    'fwhm_unwrapped': (rb.fwhm_background, 'FWHM_U_B [rad]', True),
+    'fwhm_background': (rb.fwhm_background, 'FWHM_B [rad]', False),
+    'fwhm_zones': (rb.fwhm_background, 'FWHM_Zones [rad]', False),
+
+    # Entropy metrics
+    'entropy_unwrapped': (rb.entropy_background, 'Entropy_U_B [bits]', True),
+    'entropy_background': (rb.entropy_background, 'Entropy_B [bits]', False),
+    'entropy_zones': (rb.entropy_background, 'Entropy_Zones [bits]', False),
+
+    # Legendre metrics 
+    'legendre_background': (rb.legendre_background, 'Legendre-B [rad]', False),
+    'legendre_unwrapped': (rb.legendre_background, 'Legendre-U_B [rad]', True),
+    'legendre_zones': (rb.legendre_background, 'Legendre_Zones [rad]', False),
+
+
+    # ===== MODULE 2: Global Phase Distortion Metrics =====
+
+    #  PV metrics
+    'mmm_global': (gp.maximum_minus_minimum, 'PV_Global [rad]', False),
+    'mmm_unwrapped': (gp.maximum_minus_minimum, 'PV_Global_U [rad]', True),
+
+    # Phase Gradient
+    'gradient_global': (gp.phase_gradient_prewitt, 'GPG_Global [rad/px]', False),
+    'gradient_unwrapped': (gp.phase_gradient_prewitt, 'GPG_Unwrapped [rad/px]', True),
+
+    # TSM
+    'tsm_global': (gp.tsm_global, 'TSM_Global [%]', False),
+    'tsm_unwrapped': (gp.tsm_global, 'TSM_Unwrapped [%]', True),
+
+    # # Phase Curvature
+    # 'curvature_global': (gp.reconstruction_background, 'Curvature_Global', False),
+    # 'curvature_unwrapped': (gp.reconstruction_background, 'Curvature_Unwrapped', True),
+
+    # Laplacian Energy
+    'laplacian_global': (gp.laplacian_energy, 'LE_Global [rad^2/px^4]', False),
+    'laplacian_unwrapped': (gp.laplacian_energy, 'LE_Unwrapped [rad^2/px^4]', True),
+
+    # Spatial Frequency
+    'spatial_freq_global': (gp.spatial_frequency_global, 'SF_Global [rad]', False),
+    'spatial_freq_unwrapped': (gp.spatial_frequency_global, 'SF_Unwrapped [rad]', True),
+
+    # Global Entropy
+    'global_entropy': (gp.global_entropy_global, 'Entropy_Global [bits]', False),
+    'global_entropy_unwrapped': (gp.global_entropy_global, 'Entropy_Unwrapped [bits]', True),
+
+    # GSM
+    'sharpness_global': (gp.sharpness_global, 'GSM_Global', False),
+    'sharpness_unwrapped': (gp.sharpness_global, 'GSM_Unwrapped', True),
+
+    # FWHM/Resolution
+    'fwhm_global': (gp.fwhm_global, 'FWHM_Global [rad]', False),
+    'fwhm_global_unwrapped': (gp.fwhm_global, 'FWHM_Global_U [rad]', True),
+
+
+    # ===== MODULE 3: Ground-Truth Comparisons =====
+
+    # SSIM
+    'ssim': (gtc.calculate_ssim, 'SSIM', False),
+
+    # MSE
+    'mse': (gtc.calculate_mse, 'MSE', False),
+
+    # PSNR
+    'psnr': (gtc.calculate_psnr, 'PSNR', False),
+}

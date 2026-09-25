@@ -87,6 +87,16 @@ class ImageNotebook(wx.aui.AuiNotebook):
         self.Bind(wx.aui.EVT_AUINOTEBOOK_END_DRAG, self.on_end_drag)
         self.Bind(wx.aui.EVT_AUINOTEBOOK_PAGE_CLOSE, self.on_page_close)
 
+    def _unique_title(self, title):
+        """Return `title`, or `title (2)`, `title (3)`... if it is already taken."""
+        tomados = {self.GetPageText(i) for i in range(self.GetPageCount())}
+        if title not in tomados:
+            return title
+        n = 2
+        while "%s (%d)" % (title, n) in tomados:
+            n += 1
+        return "%s (%d)" % (title, n)
+
     def add_image_tab(self, pil_img, title, page_data=None):
         """Add image tab with optional complex data (amplitude, phase)."""
         panel = wx.Panel(self)
@@ -117,7 +127,11 @@ class ImageNotebook(wx.aui.AuiNotebook):
             panel.amplitude = None
             panel.phase = None
 
-        self.AddPage(panel, title)
+        # The tab text is the key the results table uses to identify an image
+        # (_find_or_create_row matches on it), so two files with the same base
+        # name from different folders used to share a row and silently
+        # overwrite each other.
+        self.AddPage(panel, self._unique_title(title))
         self.SetSelection(self.GetPageCount() - 1)
         return panel
 

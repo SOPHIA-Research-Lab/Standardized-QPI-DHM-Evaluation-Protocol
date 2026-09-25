@@ -3,7 +3,9 @@ import wx
 def create(parent_frame, notebook):
     file_menu = wx.Menu()
     file_menu.Append(wx.ID_OPEN, "&Open\tCtrl+O", "Open Image")
-    file_menu.Append(wx.ID_SAVE, "&Save\tCtrl+S", "Save Current Image")
+    # Ctrl+S saves the RESULTS, not the image on screen: on_save exports the
+    # metric and mask tables. The label used to say 'Save Current Image'.
+    file_menu.Append(wx.ID_SAVE, "&Save Results\tCtrl+S", "Export the metric and mask tables to an Excel file")
     file_menu.AppendSeparator()
 
     # Nueva opción "Clear"
