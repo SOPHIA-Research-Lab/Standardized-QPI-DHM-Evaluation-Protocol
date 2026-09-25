@@ -1,5 +1,5 @@
 import wx
-from ui.metric_selection_dialog import show_metric_dialog, MetricSelectionDialog
+from ui.metric_selection_dialog import show_metric_dialog
 from ui.image_selection_dialog import show_image_selection_dialog
 
 def create(parent_frame, notebook):
@@ -72,44 +72,7 @@ def _show_module1_dialog(parent_frame):
     selected = show_metric_dialog(parent_frame, "Residual Background Phase Variance - Select Metrics", config)
     
     if selected:
-        handlers = {
-            # STD
-            'std_unwrapped': parent_frame.on_std_background_unwrapped,
-            'std_background': parent_frame.on_std_background,
-            'std_zones': parent_frame.on_std_background_zones,
-            
-            # MAD
-            'mad_unwrapped': parent_frame.on_mad_background_unwrapped,
-            'mad_background': parent_frame.on_mad_background,
-            'mad_zones': parent_frame.on_mad_background_zones,
-            
-            # RMS
-            'rms_unwrapped': parent_frame.on_rms_background_unwrapped,
-            'rms_background': parent_frame.on_rms_background,
-            'rms_zones': parent_frame.on_rms_background_zones,
-            
-            # PV
-            'pv_unwrapped': parent_frame.on_pv_background_unwrapped,
-            'pv_background': parent_frame.on_pv_background,
-            'pv_zones': parent_frame.on_pv_background_zones,
-            
-            # FWHM
-            'fwhm_unwrapped': parent_frame.on_fwhm_background_unwrapped,
-            'fwhm_background': parent_frame.on_fwhm_background,
-            'fwhm_zones': parent_frame.on_fwhm_background_zones,
-            
-            # Entropy
-            'entropy_unwrapped': parent_frame.on_entropy_background_unwrapped,
-            'entropy_background': parent_frame.on_entropy_background,
-            'entropy_zones': parent_frame.on_entropy_background_zones,
-            
-            # Legendre
-            'legendre_unwrapped': parent_frame.on_legendre_background_unwrapped,
-            'legendre_background': parent_frame.on_legendre_background,
-            'legendre_zones': parent_frame.on_legendre_background_zones,
-        }
-        
-        _process_selected_metrics(parent_frame, selected, handlers)
+        _process_selected_metrics(parent_frame, selected)
 
 
 # ==========================
@@ -152,52 +115,14 @@ def _show_module2_dialog(parent_frame):
         'sharpness_unwrapped': {'label': 'GSM - Unwrapped'},
 
         # FWHM/Resolution
-        'fwhm_resolution_global': {'label': 'FWHM Resolution - Global'},
-        'fwhm_resolution_unwrapped': {'label': 'FWHM Resolution - Unwrapped'},
+        'fwhm_global': {'label': 'FWHM - Global'},
+        'fwhm_global_unwrapped': {'label': 'FWHM - Unwrapped'},
     }
     
     selected = show_metric_dialog(parent_frame, "Global Phase Distortion Metrics - Select Metrics", config)
     
     if selected:
-        handlers = {
-            # MMM
-            'mmm_global': parent_frame.on_mmm_global,
-            'mmm_unwrapped': parent_frame.on_mmm_global_unwrapped,
-            
-            # Gradient
-            'gradient_global': parent_frame.on_gradient_global,
-            'gradient_unwrapped': parent_frame.on_gradient_global_unwrapped,
-            
-            # TSM
-            'tsm_global': parent_frame.on_tsm_global,
-            'tsm_unwrapped': parent_frame.on_tsm_global_unwrapped,
-            
-            # # Curvature
-            # 'curvature_global': parent_frame.on_curvature_global,
-            # 'curvature_unwrapped': parent_frame.on_curvature_global_unwrapped,
-            
-            # Laplacian
-            'laplacian_global': parent_frame.on_laplacian_global,
-            'laplacian_unwrapped': parent_frame.on_laplacian_global_unwrapped,
-            
-            # Spatial Frequency
-            'spatial_freq_global': parent_frame.on_spatial_freq_global,
-            'spatial_freq_unwrapped': parent_frame.on_spatial_freq_global_unwrapped,
-            
-            # Global Entropy
-            'global_entropy': parent_frame.on_global_entropy_global,
-            'global_entropy_unwrapped': parent_frame.on_global_entropy_global_unwrapped,
-            
-            # Sharpness
-            'sharpness_global': parent_frame.on_sharpness_global,
-            'sharpness_unwrapped': parent_frame.on_sharpness_global_unwrapped,
-
-            # FWHM/Resolution
-            'fwhm_resolution_global': parent_frame.on_fwhm_resolution_global,
-            'fwhm_resolution_unwrapped': parent_frame.on_fwhm_resolution_global_unwrapped,
-        }
-        
-        _process_selected_metrics(parent_frame, selected, handlers)
+        _process_selected_metrics(parent_frame, selected)
 
 
 # ==========================
@@ -226,75 +151,31 @@ def _show_module3_dialog(parent_frame):
     config = {
         # SSIM
         'ssim': {'label': 'Structural Similarity (SSIM)'},
-        'ssim_unwrapped': {'label': 'Structural Similarity (SSIM) - Unwrapped'},
         
         # MSE
         'mse': {'label': 'Mean Squared Error (MSE)'},
-        'mse_unwrapped': {'label': 'Mean Squared Error (MSE) - Unwrapped'},
         
         # PSNR
         'psnr': {'label': 'Peak Signal-to-Noise Ratio (PSNR)'},
-        'psnr_unwrapped': {'label': 'Peak Signal-to-Noise Ratio (PSNR) - Unwrapped'},
     }
     
     selected = show_metric_dialog(parent_frame, "Ground-Truth Comparisons - Select Metrics", config)
     
     if selected:
-        handlers = {
-            # SSIM
-            'ssim': parent_frame.on_ssim_comparison,
-            'ssim_unwrapped': parent_frame.on_ssim_comparison_unwrapped,
-            
-            # MSE
-            'mse': parent_frame.on_mse_comparison,
-            'mse_unwrapped': parent_frame.on_mse_comparison_unwrapped,
-            
-            # PSNR
-            'psnr': parent_frame.on_psnr_comparison,
-            'psnr_unwrapped': parent_frame.on_psnr_comparison_unwrapped,
-        }
-        
-        _process_selected_metrics(parent_frame, selected, handlers)
+        _process_selected_metrics(parent_frame, selected)
 
 
 # ==========================
 # Helper function
 # ==========================
 
-def process_selected_metrics(parent_frame, module_metrics_config):
-    """Process multiple selected metrics."""
-    # Mostrar diálogo de selección de métricas
-    dlg = MetricSelectionDialog(parent_frame, metrics_config=module_metrics_config)
-    
-    if dlg.ShowModal() == wx.ID_OK:
-        selected_metrics = dlg.get_selected_metrics()
-        
-        if not selected_metrics:
-            wx.MessageBox("No metrics selected", "Info", wx.ICON_INFORMATION)
-            dlg.Destroy()
-            return
-        
-        # Mostrar diálogo de selección de imágenes UNA SOLA VEZ
-        selected_indices = show_image_selection_dialog(parent_frame, parent_frame.notebook)
-        
-        if selected_indices is None or len(selected_indices) == 0:
-            dlg.Destroy()
-            return
-        
-        # Calcular todas las métricas para todas las imágenes
-        parent_frame._calculate_multiple_metrics(selected_metrics, selected_indices)
-    
-    dlg.Destroy()
-
-
-def _process_selected_metrics(parent_frame, selected_metrics, handlers):
+def _process_selected_metrics(parent_frame, selected_metrics):
     """
-    Process selected metrics using the new cached multi-metric system.
-    
+    Process selected metrics using the cached multi-metric system.
+
     Args:
         parent_frame: MainFrame instance
         selected_metrics: Dict of {metric_id: label_string}
-        handlers: Dict of {metric_id: handler_function} (DEPRECATED for cached system)
     """
     if not selected_metrics:
         wx.MessageBox("No metrics selected", "Info", wx.ICON_INFORMATION)

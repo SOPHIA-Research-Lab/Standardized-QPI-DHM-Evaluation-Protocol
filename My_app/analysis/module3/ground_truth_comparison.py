@@ -3,7 +3,6 @@ from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import mean_squared_error, peak_signal_noise_ratio
 from PIL import Image
 from analysis.module1 import utilitiesRBPV as utRBPV
-from analysis.module1 import residual_background as rb
 
 
 def load_ground_truth(path):
@@ -31,7 +30,17 @@ def load_ground_truth(path):
         raise ValueError(f"Error loading ground-truth: {str(e)}")
 
 
-def _prepare_sample_and_gt(sample, ground_truth, use_unwrap=False):
+def _prepare_sample_and_gt(sample, ground_truth):
+    """
+    Bring sample and ground truth to a comparable form.
+
+    Neither side is unwrapped. A ground truth loaded from an 8-bit image is
+    a linear rescale of the intensity to [-pi, pi], not a wrapped phase map
+    with genuine 2*pi jumps, so unwrapping it invented discontinuities: it
+    moved ~16% of the reference pixels by more than pi and stretched its
+    range from [-3.1, 3.1] to [-33, 50] rad. The reference has to stay as
+    loaded for the comparison to mean anything.
+    """
     
     # Convert sample to numpy if it's PIL
     if isinstance(sample, Image.Image):
@@ -40,11 +49,6 @@ def _prepare_sample_and_gt(sample, ground_truth, use_unwrap=False):
         sample_phase = utRBPV.grayscaleToPhase(sample_array)
     else:
         sample_phase = sample
-
-    # Unwrap if requested
-    if use_unwrap:
-        sample_phase = rb.unwrap_with_scikit(sample_phase)
-        ground_truth = rb.unwrap_with_scikit(ground_truth)
 
     sample_phase = np.asarray(sample_phase, dtype=np.float64)
     ground_truth = np.asarray(ground_truth, dtype=np.float64)
@@ -59,9 +63,9 @@ def _prepare_sample_and_gt(sample, ground_truth, use_unwrap=False):
     return sample_phase, ground_truth
 
 
-def calculate_ssim(sample, ground_truth, use_unwrap=False):
+def calculate_ssim(sample, ground_truth):
     """ Calculate Structural Similarity Index (SSIM). """
-    sample_phase, ground_truth = _prepare_sample_and_gt(sample, ground_truth, use_unwrap)
+    sample_phase, ground_truth = _prepare_sample_and_gt(sample, ground_truth)
 
     gt_min = ground_truth.min()
     gt_max = ground_truth.max()
@@ -76,18 +80,18 @@ def calculate_ssim(sample, ground_truth, use_unwrap=False):
     return ssim_value
 
 
-def calculate_mse(sample, ground_truth, use_unwrap=False):
+def calculate_mse(sample, ground_truth):
     """ Calculate Mean Squared Error (MSE)."""
-    sample_phase, ground_truth = _prepare_sample_and_gt(sample, ground_truth, use_unwrap)
+    sample_phase, ground_truth = _prepare_sample_and_gt(sample, ground_truth)
 
     mse_value = mean_squared_error(ground_truth, sample_phase)
 
     return mse_value
 
 
-def calculate_psnr(sample, ground_truth, use_unwrap=False):
+def calculate_psnr(sample, ground_truth):
     """ Calculate Peak Signal-to-Noise Ratio (PSNR)."""
-    sample_phase, ground_truth = _prepare_sample_and_gt(sample, ground_truth, use_unwrap)
+    sample_phase, ground_truth = _prepare_sample_and_gt(sample, ground_truth)
 
     data_range = ground_truth.max() - ground_truth.min()
 

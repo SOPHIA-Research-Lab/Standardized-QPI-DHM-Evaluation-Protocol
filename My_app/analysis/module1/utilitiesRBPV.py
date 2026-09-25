@@ -1,4 +1,4 @@
-from PIL import Image, ImageOps
+from PIL import Image
 from scipy.ndimage import distance_transform_edt
 from skimage import measure, morphology
 from skimage.segmentation import watershed
@@ -10,11 +10,6 @@ import wx
 # ----------------------------
 # IO / helpers
 # ----------------------------
-def imageRead(namefile):
-    """Read image from file and return grayscale PIL Image."""
-    imagen = Image.open(namefile)
-    loadImage = ImageOps.grayscale(imagen)
-    return loadImage
 
 
 def grayscaleToPhase(image: np.ndarray) -> np.ndarray:
@@ -339,7 +334,7 @@ def create_background_mask_interactive(image: np.ndarray, method: str = 'otsu',
     Create background mask interactively with wxPython dialog.
     
     Returns:
-        tuple: (background_mask, background_values, threshold_value) or (None, None, None) if cancelled
+        tuple: (background_mask, threshold_value), or (None, None) if cancelled
     """
     image = np.array(image, dtype=float)
     
@@ -365,7 +360,7 @@ def create_background_mask_interactive(image: np.ndarray, method: str = 'otsu',
 
     # Handle cancellation
     if threshold_value is None or sample_is_white is None:
-        return None, None, None
+        return None, None
     
     # Normalize image to 0-1 range
     img_min, img_max = np.min(image), np.max(image)
@@ -420,7 +415,7 @@ def create_background_mask(image: np.ndarray, method: str = 'otsu',
     Wrapper function for create_background_mask_interactive.
     
     Returns:
-        tuple: (background_mask, background_values, threshold_value) or (None, None, None) if cancelled
+        tuple: (background_mask, threshold_value), or (None, None) if cancelled
     """
     return create_background_mask_interactive(
         image, method, manual_threshold, min_area, hole_area, parent
