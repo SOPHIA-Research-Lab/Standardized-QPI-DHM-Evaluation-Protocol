@@ -857,13 +857,13 @@ class MainFrame(wx.Frame):
 
             subprocess.Popen([sys.executable, gui_script])
 
-            wx.MessageBox(
-                "Computational Complexity GUI launched successfully!\n\n"
-                "Note: the profiling step relies on the Linux 'perf' "
-                "utility, so measurements require Linux or WSL2. "
-                "The GUI itself opens on any platform.",
-                "Success",
-                wx.ICON_INFORMATION
+            # No confirmation dialog here on purpose: it used to pop up the
+            # instant the process was launched, which pulled the focus back to
+            # this window and left the complexity window opening behind it.
+            # The status bar says the same thing without taking the foreground.
+            self.SetStatusText(
+                "Computational Complexity launched. Profiling needs Linux "
+                "or WSL2; the window itself opens anywhere."
             )
 
         except Exception as e:
