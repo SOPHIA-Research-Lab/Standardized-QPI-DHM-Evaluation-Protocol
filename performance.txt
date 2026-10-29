@@ -1,0 +1,263 @@
+Performance analysis - CFS
+==================================================
+
+Analyzed directory: C:/Users/gaezn/Downloads/complexity_algorithm-main
+Original parameters: {'inp': 'C:\\Users\\gaezn\\Downloads\\complexity_algorithm-main', 'wavelength': '.632', 'dx': '4.75', 'dy': '4.75'}
+
+--- BASELINE L (libs without image or call) ---
+  [BLOCK L K=0] Repetition 1:
+
+ Performance counter stats for 'python3 /tmp/temp_perf_22732.py':
+
+   <not supported>      cycles                                                                
+   <not supported>      instructions                                                          
+   <not supported>      cache-references                                                      
+   <not supported>      cache-misses                                                          
+
+       2.990577555 seconds time elapsed
+
+       0.703547000 seconds user
+       0.472076000 seconds sys
+
+
+
+
+  [BLOCK L K=0] Repetition 2:
+
+ Performance counter stats for 'python3 /tmp/temp_perf_22732.py':
+
+   <not supported>      cycles                                                                
+   <not supported>      instructions                                                          
+   <not supported>      cache-references                                                      
+   <not supported>      cache-misses                                                          
+
+       1.177486792 seconds time elapsed
+
+       0.607305000 seconds user
+       0.092104000 seconds sys
+
+
+
+
+  [BLOCK L K=0] Repetition 3:
+
+ Performance counter stats for 'python3 /tmp/temp_perf_22732.py':
+
+   <not supported>      cycles                                                                
+   <not supported>      instructions                                                          
+   <not supported>      cache-references                                                      
+   <not supported>      cache-misses                                                          
+
+       1.196656492 seconds time elapsed
+
+       0.684436000 seconds user
+       0.112314000 seconds sys
+
+
+
+
+  [BLOCK L K=0] Repetition 4:
+
+ Performance counter stats for 'python3 /tmp/temp_perf_22732.py':
+
+   <not supported>      cycles                                                                
+   <not supported>      instructions                                                          
+   <not supported>      cache-references                                                      
+   <not supported>      cache-misses                                                          
+
+       1.160596372 seconds time elapsed
+
+       0.650606000 seconds user
+       0.127071000 seconds sys
+
+
+
+
+  [BLOCK L K=0] Repetition 5:
+
+ Performance counter stats for 'python3 /tmp/temp_perf_22732.py':
+
+   <not supported>      cycles                                                                
+   <not supported>      instructions                                                          
+   <not supported>      cache-references                                                      
+   <not supported>      cache-misses                                                          
+
+       0.786455893 seconds time elapsed
+
+       0.512831000 seconds user
+       0.085421000 seconds sys
+
+
+
+
+  [BLOCK L K=0] Repetition 6:
+
+ Performance counter stats for 'python3 /tmp/temp_perf_22732.py':
+
+   <not supported>      cycles                                                                
+   <not supported>      instructions                                                          
+   <not supported>      cache-references                                                      
+   <not supported>      cache-misses                                                          
+
+       1.023433915 seconds time elapsed
+
+       0.540153000 seconds user
+       0.139400000 seconds sys
+
+
+
+
+  [BLOCK L K=0] Repetition 7:
+
+ Performance counter stats for 'python3 /tmp/temp_perf_22732.py':
+
+   <not supported>      cycles                                                                
+   <not supported>      instructions                                                          
+   <not supported>      cache-references                                                      
+   <not supported>      cache-misses                                                          
+
+       1.080345538 seconds time elapsed
+
+       0.662989000 seconds user
+       0.069345000 seconds sys
+
+
+
+
+  [BLOCK L K=0] Repetition 8:
+
+ Performance counter stats for 'python3 /tmp/temp_perf_22732.py':
+
+   <not supported>      cycles                                                                
+   <not supported>      instructions                                                          
+   <not supported>      cache-references                                                      
+   <not supported>      cache-misses                                                          
+
+       1.103507123 seconds time elapsed
+
+       0.665792000 seconds user
+       0.059834000 seconds sys
+
+
+
+
+  [BLOCK L K=0] Repetition 9:
+
+ Performance counter stats for 'python3 /tmp/temp_perf_22732.py':
+
+   <not supported>      cycles                                                                
+   <not supported>      instructions                                                          
+   <not supported>      cache-references                                                      
+   <not supported>      cache-misses                                                          
+
+       1.114219123 seconds time elapsed
+
+       0.624479000 seconds user
+       0.125364000 seconds sys
+
+
+
+
+  [BLOCK L K=0] Repetition 10:
+
+ Performance counter stats for 'python3 /tmp/temp_perf_22732.py':
+
+   <not supported>      cycles                                                                
+   <not supported>      instructions                                                          
+   <not supported>      cache-references                                                      
+   <not supported>      cache-misses                                                          
+
+       1.209741815 seconds time elapsed
+
+       0.678104000 seconds user
+       0.152425000 seconds sys
+
+
+
+
+  [BLOCK L K=0] Repetition 11:
+
+ Performance counter stats for 'python3 /tmp/temp_perf_22732.py':
+
+   <not supported>      cycles                                                                
+   <not supported>      instructions                                                          
+   <not supported>      cache-references                                                      
+   <not supported>      cache-misses                                                          
+
+       0.997568504 seconds time elapsed
+
+       0.572731000 seconds user
+       0.107520000 seconds sys
+
+
+
+
+  [BLOCK L K=0] Repetition 12:
+
+ Performance counter stats for 'python3 /tmp/temp_perf_22732.py':
+
+   <not supported>      cycles                                                                
+   <not supported>      instructions                                                          
+   <not supported>      cache-references                                                      
+   <not supported>      cache-misses                                                          
+
+       1.022983674 seconds time elapsed
+
+       0.644669000 seconds user
+       0.055086000 seconds sys
+
+
+
+
+  [BLOCK L K=0] Repetition 13:
+
+ Performance counter stats for 'python3 /tmp/temp_perf_22732.py':
+
+   <not supported>      cycles                                                                
+   <not supported>      instructions                                                          
+   <not supported>      cache-references                                                      
+   <not supported>      cache-misses                                                          
+
+       0.863494830 seconds time elapsed
+
+       0.428760000 seconds user
+       0.084847000 seconds sys
+
+
+
+
+  [BLOCK L K=0] Repetition 14:
+
+ Performance counter stats for 'python3 /tmp/temp_perf_22732.py':
+
+   <not supported>      cycles                                                                
+   <not supported>      instructions                                                          
+   <not supported>      cache-references                                                      
+   <not supported>      cache-misses                                                          
+
+       0.778645857 seconds time elapsed
+
+       0.438166000 seconds user
+       0.060738000 seconds sys
+
+
+
+
+  [BLOCK L K=0] Repetition 15:
+
+ Performance counter stats for 'python3 /tmp/temp_perf_22732.py':
+
+   <not supported>      cycles                                                                
+   <not supported>      instructions                                                          
+   <not supported>      cache-references                                                      
+   <not supported>      cache-misses                                                          
+
+       0.788253368 seconds time elapsed
+
+       0.486368000 seconds user
+       0.042560000 seconds sys
+
+
+
+
+
