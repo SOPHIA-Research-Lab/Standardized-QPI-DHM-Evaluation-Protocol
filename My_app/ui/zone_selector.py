@@ -14,6 +14,8 @@ import cv2
 import numpy as np
 import wx
 
+from ui import hidpi
+
 
 class ManualRectangleSelector:
     """Interactive rectangle selector using wxPython (replaces matplotlib version)."""
@@ -90,7 +92,12 @@ class WxRectangleSelectorDialog(wx.Dialog):
         self.display_w = int(img_w * self.scale)
         self.display_h = int(img_h * self.scale)
         
-        self.SetSize((self.display_w + 40, self.display_h + 120))
+        # The margins are the title and the button row, which are text: they
+        # grow with the screen scale, the image does not. Clamped to the
+        # desktop, which is shorter than the screen by the taskbar.
+        util = wx.GetClientDisplayRect()
+        self.SetSize((min(self.display_w + self.FromDIP(40), util.width),
+                      min(self.display_h + self.FromDIP(120), util.height)))
         self.Centre()
         
         self._build_ui()
@@ -181,8 +188,12 @@ class WxRectangleSelectorDialog(wx.Dialog):
         height, width = rgb_display.shape[:2]
         wx_image = wx.Image(width, height)
         wx_image.SetData(rgb_display.tobytes())
-        bitmap = wx.Bitmap(wx_image)
-        
+        # The widget is sized to the bitmap's own pixels just below, so the
+        # bitmap has to carry the screen's scale factor: otherwise wx draws it
+        # at double size and the control shows a corner of the image, with
+        # every mouse coordinate off by the same factor.
+        bitmap = hidpi.bitmap(wx_image, self)
+
         self.bitmap_widget.SetBitmap(bitmap)
         self.bitmap_widget.SetSize((width, height))
         

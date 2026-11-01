@@ -26,6 +26,10 @@ class AnalysisCache:
         self.unwrapped = {}      # image name -> {fingerprint, unwrapped}
         self.zones = {}          # cache key   -> (zones, num_zones)
         self.shared_zones = None  # (zones, num_zones) reused across images
+        #: (image name, unwrapped) -> (fingerprint, threshold) for TSM. The
+        #: wrapped and unwrapped phase of one image are different pictures,
+        #: so they get their own threshold.
+        self.tsm_thresholds = {}
 
     # ------------------------------------------------------------------ zonas
     def zone_key(self, image_name, metric_id=None):
@@ -57,6 +61,8 @@ class AnalysisCache:
         """Drop everything tied to one image, when its tab is closed."""
         self.masks.pop(image_name, None)
         self.unwrapped.pop(image_name, None)
+        for k in [k for k in self.tsm_thresholds if k[0] == image_name]:
+            del self.tsm_thresholds[k]
         for k in [k for k in self.zones if k.startswith("%s_" % image_name)]:
             del self.zones[k]
 
@@ -64,4 +70,5 @@ class AnalysisCache:
         self.masks.clear()
         self.unwrapped.clear()
         self.zones.clear()
+        self.tsm_thresholds.clear()
         self.shared_zones = None
