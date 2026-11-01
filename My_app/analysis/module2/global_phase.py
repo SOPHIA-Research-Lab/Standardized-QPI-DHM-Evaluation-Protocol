@@ -235,7 +235,114 @@ def global_entropy_global(phase: np.ndarray, use_unwrap: bool = False, bins: int
     return float(H)
 
 
-def tsm_global(phase: np.ndarray, use_unwrap: bool = False, use_adaptive: bool = True):
+def normalised_phase(phase, use_unwrap=False):
+    """The phi_comp_nor of the TSM definition: the phase mapped onto [0, 1]."""
+    phi = np.asarray(phase, dtype=np.float64)
+    if phi.ndim != 2:
+        raise ValueError("Phase image must be 2D.")
+    if use_unwrap:
+        phi = unwrap_phase(phi)
+
+    vmin, vmax = np.nanmin(phi), np.nanmax(phi)
+    if vmax <= vmin:
+        raise ValueError("Phase image has zero dynamic range.")
+    return (phi - vmin) / (vmax - vmin)
+
+
+def histogram_valley(phi_nor, bins=256, smooth=5):
+    """
+    Suggest the binarisation threshold: the valley between the two peaks.
+
+    A compensated phase map is bimodal -- background on one side, sample on
+    the other -- so the threshold that separates them sits in the dip between
+    the two humps. The dip is found geometrically: draw the chord joining the
+    two peaks and take the histogram bin lying furthest BELOW it, which is
+    the d of the usual figure. That beats "the lowest bin between them",
+    because a noisy histogram has many local minima while the distance to the
+    chord has one clear maximum.
+
+    The two peaks are picked by PROMINENCE, not by height within a fixed
+    window: a first attempt used "the tallest bin at least bins/20 away",
+    which on a wide hump simply found its own shoulder and put the threshold
+    on top of the first peak.
+
+    Parameters
+    ----------
+    phi_nor : ndarray
+        Phase normalised to [0, 1].
+    bins : int
+        Histogram resolution.
+    smooth : int
+        Width of the moving average applied before looking for peaks.
+
+    Returns
+    -------
+    dict
+        threshold : float in [0, 1]
+        centres, counts, smoothed : the histogram, for plotting
+        peak_lo, peak_hi : bin indices of the two peaks
+        valley : bin index of the chosen threshold
+        ok : False when no second peak stands out, in which case the
+             histogram is not bimodal and `threshold` falls back to the mean.
+    """
+    from scipy.signal import find_peaks
+
+    valores = np.asarray(phi_nor, dtype=np.float64).ravel()
+    valores = valores[np.isfinite(valores)]
+
+    counts, edges = np.histogram(valores, bins=bins, range=(0.0, 1.0))
+    centres = 0.5 * (edges[:-1] + edges[1:])
+
+    suave = counts.astype(float)
+    if smooth > 1:
+        suave = np.convolve(suave, np.ones(smooth) / smooth, mode='same')
+
+    base = {'centres': centres, 'counts': counts, 'smoothed': suave}
+
+    if suave.max() <= 0:
+        base.update({'threshold': 0.5, 'peak_lo': 0, 'peak_hi': 0,
+                     'valley': bins // 2, 'ok': False})
+        return base
+
+    # A hump has to rise at least 5% of the tallest one above its surroundings
+    # to count, and two peaks closer than a twentieth of the range are the
+    # same hump.
+    picos, props = find_peaks(suave,
+                              prominence=0.05 * suave.max(),
+                              distance=max(3, bins // 20))
+
+    if len(picos) < 2:
+        base.update({'threshold': float(valores.mean()),
+                     'peak_lo': int(picos[0]) if len(picos) else 0,
+                     'peak_hi': int(picos[0]) if len(picos) else 0,
+                     'valley': bins // 2, 'ok': False})
+        return base
+
+    # The two most prominent ones, in histogram order.
+    dos = picos[np.argsort(props['prominences'])[-2:]]
+    izq, der = int(min(dos)), int(max(dos))
+
+    x = np.arange(izq, der + 1, dtype=float)
+    y = suave[izq:der + 1]
+    x0, y0 = float(izq), float(suave[izq])
+    dx, dy = float(der) - x0, float(suave[der]) - y0
+    norma = np.hypot(dx, dy)
+
+    if norma == 0:
+        valle = (izq + der) // 2
+    else:
+        # Positive where the histogram runs BELOW the chord.
+        distancia = ((x - x0) * dy - (y - y0) * dx) / norma
+        valle = int(izq + np.argmax(distancia))
+
+    base.update({'threshold': float(centres[valle]),
+                 'peak_lo': izq, 'peak_hi': der,
+                 'valley': valle, 'ok': True})
+    return base
+
+
+def tsm_global(phase: np.ndarray, use_unwrap: bool = False, use_adaptive: bool = True,
+               threshold: float = None):
     """
     Calculates the global dark-area metric (percentage of black pixels)
     from a phase image after binarization.
@@ -271,7 +378,10 @@ def tsm_global(phase: np.ndarray, use_unwrap: bool = False, use_adaptive: bool =
         raise ValueError("Phase image has zero dynamic range.")
 
     # --- Binarization ---
-    if use_adaptive:
+    if threshold is not None:
+        # Chosen by the user on the histogram; see histogram_valley().
+        binary = phase > float(threshold)
+    elif use_adaptive:
         block_size = 35  # can be tuned
         local_thresh = threshold_local(phase, block_size)
         binary = phase > local_thresh

@@ -4,7 +4,8 @@ class MetricSelectionDialog(wx.Dialog):
     """Dialog for selecting multiple metrics with checkboxes."""
     
     def __init__(self, parent, title="Select Metrics", metrics_config=None):
-        super().__init__(parent, title=title, size=(450, 500))
+        super().__init__(parent, title=title,
+                         size=wx.Window.FromDIP(wx.Size(450, 500), parent))
         
         self.metrics_config = metrics_config or {}
         self.checkboxes = {}

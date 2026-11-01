@@ -492,8 +492,16 @@ class PerformanceAnalyzerApp(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda e: self.generate_plots(), plots_item)
 
     def setup_ui(self):
+        # One root panel, and the notebook inside a sizer. Before this the
+        # notebook hung straight off the wx.Frame with no sizer at all, so it
+        # did not fill the window and the frame's COLOUR_APPWORKSPACE
+        # (#ABABAB) showed around it, a different grey from the #F0F0F0 of the
+        # panels inside. The main window had the same defect.
+        self.root_panel = wx.Panel(self)
+
         # Notebook (pestañas)
-        self.notebook = wx.aui.AuiNotebook(self, style=wx.aui.AUI_NB_TOP | wx.aui.AUI_NB_TAB_MOVE)
+        self.notebook = wx.aui.AuiNotebook(
+            self.root_panel, style=wx.aui.AUI_NB_TOP | wx.aui.AUI_NB_TAB_MOVE)
 
         # Pestaña 1: Análisis de performance
         self.analysis_panel = wx.Panel(self.notebook)
@@ -504,6 +512,14 @@ class PerformanceAnalyzerApp(wx.Frame):
         self.visualization_panel = wx.Panel(self.notebook)
         self.notebook.AddPage(self.visualization_panel, "Visualization")
         self.setup_visualization_tab()
+
+        panel_sizer = wx.BoxSizer(wx.VERTICAL)
+        panel_sizer.Add(self.notebook, 1, wx.EXPAND)
+        self.root_panel.SetSizer(panel_sizer)
+
+        frame_sizer = wx.BoxSizer(wx.VERTICAL)
+        frame_sizer.Add(self.root_panel, 1, wx.EXPAND)
+        self.SetSizer(frame_sizer)
 
     def setup_analysis_tab(self):
         panel = self.analysis_panel

@@ -14,6 +14,7 @@ import numpy as np
 import wx
 
 from analysis.module1.utilitiesRBPV import build_background_mask
+from ui import hidpi
 
 
 #: The welcome text explains the tool, not this particular image, so it is shown
@@ -22,8 +23,14 @@ from analysis.module1.utilitiesRBPV import build_background_mask
 _WELCOME_SHOWN = False
 
 
-def numpy_to_wx_bitmap(arr: np.ndarray, target_size=(400, 400)):
-    """Convert numpy array (H,W) or (H,W,3) to wx.Bitmap, fitting within target_size."""
+def numpy_to_wx_bitmap(arr: np.ndarray, target_size=(400, 400), window=None):
+    """
+    Convert numpy array (H,W) or (H,W,3) to wx.Bitmap, fitting target_size.
+
+    `target_size` is in physical pixels, and `window` is what tells the bitmap
+    the screen's scale -- without it wx lays the result out at twice the size
+    on a 200 % display. See ui/hidpi.py.
+    """
     if arr.dtype != np.uint8:
         arr = (np.clip(arr, 0, 1) * 255).astype(np.uint8) if arr.max() <= 1.0 else arr.astype(np.uint8)
     
@@ -50,7 +57,7 @@ def numpy_to_wx_bitmap(arr: np.ndarray, target_size=(400, 400)):
     if scale != 1.0:
         img = img.Scale(new_w, new_h, wx.IMAGE_QUALITY_HIGH)
 
-    return wx.Bitmap(img)
+    return hidpi.bitmap(img, window)
 
 
 # ------------------------------------------------
@@ -98,24 +105,25 @@ class WxThresholdDialog(wx.Dialog):
         self.confirmed = False
         self.final_threshold = self.current_threshold
         
-        # Calculate preview size based on screen (leaving margin for taskbar and title bar)
-        display_size = wx.GetDisplaySize()
-        available_height = display_size[1] - 150  # Reserve space for taskbar and title bar
-        available_width = display_size[0] - 100
-        
-        # Calculate preview sizes
-        self.preview_w = min(450, int(available_width * 0.22))
-        self.preview_h = min(350, int(available_height * 0.35))
+        # Preview size, in physical pixels: a share of the screen, capped at
+        # a comfortable size expressed in logical units so the cap means the
+        # same thing on every display.
+        util = wx.GetClientDisplayRect()
+        self.preview_w = min(self.FromDIP(420), int(util.width * 0.26))
+        self.preview_h = min(self.FromDIP(330), int(util.height * 0.35))
         self.preview_size = (self.preview_w, self.preview_h)
-
-        # Set dialog size based on preview sizes (ensure it fits on screen)
-        dialog_width = min(self.preview_w * 2 + 80, available_width)
-        dialog_height = min(self.preview_h * 2 + 280, available_height)
-        self.SetSize((dialog_width, dialog_height))
-        self.Centre()
 
         self._build_ui()
         self._update_previews()
+
+        # The window asks its contents how big it has to be. It used to be
+        # given the previews plus 280 px for everything underneath, which at
+        # 200 % was half of what the controls needed: the threshold slider was
+        # squeezed into a few pixels and its label cut off mid-word.
+        self.GetSizer().Fit(self)
+        self.SetSize(wx.Size(min(self.GetSize().width, util.width),
+                             min(self.GetSize().height, util.height)))
+        self.Centre()
         wx.CallAfter(self._show_welcome_message)
 
     def _show_welcome_message(self):
@@ -198,7 +206,8 @@ class WxThresholdDialog(wx.Dialog):
         fila_obj.Add(wx.StaticText(self, label="Discard objects under"), 0,
                      wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 4)
         self.spin_min_area = wx.SpinCtrl(self, min=1, max=100000,
-                                         initial=self.min_area, size=(80, -1))
+                                         initial=self.min_area,
+                                         size=self.FromDIP(wx.Size(80, -1)))
         fila_obj.Add(self.spin_min_area, 0, wx.ALIGN_CENTER_VERTICAL)
         fila_obj.Add(wx.StaticText(self, label="px"), 0,
                      wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
@@ -208,7 +217,8 @@ class WxThresholdDialog(wx.Dialog):
         fila_hue.Add(wx.StaticText(self, label="Fill holes under"), 0,
                      wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 4)
         self.spin_hole_area = wx.SpinCtrl(self, min=1, max=100000,
-                                          initial=self.hole_area, size=(80, -1))
+                                          initial=self.hole_area,
+                                          size=self.FromDIP(wx.Size(80, -1)))
         fila_hue.Add(self.spin_hole_area, 0, wx.ALIGN_CENTER_VERTICAL)
         fila_hue.Add(wx.StaticText(self, label="px"), 0,
                      wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
@@ -340,10 +350,12 @@ class WxThresholdDialog(wx.Dialog):
         bin_u8, final_sample_mask, background_mask = self._compute_masks(self.current_threshold)
         
         # Create bitmaps with proper sizing
-        bmp_orig = numpy_to_wx_bitmap(self.img_u8, target_size=self.preview_size)
-        bmp_bin = numpy_to_wx_bitmap(bin_u8, target_size=self.preview_size)
-        bmp_sample = numpy_to_wx_bitmap(final_sample_mask.astype(np.uint8) * 255, target_size=self.preview_size)
-        bmp_background = numpy_to_wx_bitmap(background_mask.astype(np.uint8) * 255, target_size=self.preview_size)
+        bmp_orig = numpy_to_wx_bitmap(self.img_u8, self.preview_size, self)
+        bmp_bin = numpy_to_wx_bitmap(bin_u8, self.preview_size, self)
+        bmp_sample = numpy_to_wx_bitmap(
+            final_sample_mask.astype(np.uint8) * 255, self.preview_size, self)
+        bmp_background = numpy_to_wx_bitmap(
+            background_mask.astype(np.uint8) * 255, self.preview_size, self)
         
         # Update bitmaps
         self.bmp_original_image.SetBitmap(bmp_orig)

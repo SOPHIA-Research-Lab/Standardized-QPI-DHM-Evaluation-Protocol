@@ -3,11 +3,44 @@ import wx.aui
 import numpy as np
 from PIL import Image
 
+from ui import hidpi
+
+
+def fit_bitmap(bitmap_ctrl, pil_img, zoom):
+    """
+    Draw the image at the panel's real pixel count.
+
+    The resize targets PHYSICAL pixels -- the panel's client size -- and the
+    bitmap then declares the screen's scale factor. Without that declaration
+    wx reads the bitmap's pixels as logical units and lays the control out at
+    twice the size, so the image was stretched to double and clipped by the
+    panel holding it. With it, a phase map on a 200 % display is resampled to
+    the pixels the monitor actually has instead of half of them.
+    """
+    panel = bitmap_ctrl.Parent
+    panel_size = panel.GetClientSize()
+    img_w, img_h = pil_img.size
+
+    if panel_size[0] > 0 and panel_size[1] > 0:
+        auto_scale = min(panel_size[0] / img_w, panel_size[1] / img_h)
+    else:
+        auto_scale = 1.0
+
+    total = auto_scale * zoom
+    nuevo = (max(1, int(img_w * total)), max(1, int(img_h * total)))
+
+    resized = pil_img.resize(nuevo, Image.LANCZOS)
+    arr = np.array(resized.convert("RGB"))
+    bitmap = wx.Bitmap.FromBuffer(arr.shape[1], arr.shape[0], arr)
+    bitmap_ctrl.SetBitmap(hidpi.bitmap(bitmap, panel))
+    panel.Layout()
+
 class DetachedFrame(wx.Frame):
     """Independent window for images detached from the notebook."""
     
     def __init__(self, parent, title, pil_img, notebook, page_data=None):
-        super().__init__(parent=None, title=title, size=(400, 300))
+        super().__init__(parent=None, title=title,
+                         size=wx.Window.FromDIP(wx.Size(400, 300), None))
         self.notebook = notebook
         self.pil_img = pil_img
         self.scale = 1.0
@@ -33,26 +66,7 @@ class DetachedFrame(wx.Frame):
 
     def _update_bitmap(self, bitmap_ctrl, pil_img, scale):
         """Update bitmap control with specified zoom level or auto-fit to panel."""
-        panel = bitmap_ctrl.Parent
-        panel_size = panel.GetClientSize()
-        img_w, img_h = pil_img.size
-
-        # Si el panel tiene tamaño válido, ajustar automáticamente
-        if panel_size[0] > 0 and panel_size[1] > 0:
-            # Calcular escala automática inicial
-            auto_scale = min(panel_size[0] / img_w, panel_size[1] / img_h)
-        else:
-            auto_scale = 1.0
-
-        # Aplicar el zoom del usuario (rueda del mouse)
-        total_scale = auto_scale * scale
-        new_size = (max(1, int(img_w * total_scale)), max(1, int(img_h * total_scale)))
-
-        resized = pil_img.resize(new_size, Image.LANCZOS)
-        arr = np.array(resized.convert("RGB"))
-        bitmap = wx.Bitmap.FromBuffer(arr.shape[1], arr.shape[0], arr)
-        bitmap_ctrl.SetBitmap(bitmap)
-        panel.Layout()
+        fit_bitmap(bitmap_ctrl, pil_img, scale)
 
     def on_zoom(self, event):
         """Handle mouse wheel zoom."""
@@ -137,24 +151,7 @@ class ImageNotebook(wx.aui.AuiNotebook):
 
     def _update_bitmap(self, bitmap_ctrl, pil_img, scale):
         """Update bitmap control with specified zoom level or auto-fit to panel."""
-        panel = bitmap_ctrl.Parent
-        panel_size = panel.GetClientSize()
-        img_w, img_h = pil_img.size
-
-        # If the panel has a valid size, calculate auto-fit
-        if panel_size[0] > 0 and panel_size[1] > 0:
-            auto_scale = min(panel_size[0] / img_w, panel_size[1] / img_h)
-        else:
-            auto_scale = 1.0
-
-        total_scale = auto_scale * scale
-        new_size = (max(1, int(img_w * total_scale)), max(1, int(img_h * total_scale)))
-
-        resized = pil_img.resize(new_size, Image.LANCZOS)
-        arr = np.array(resized.convert("RGB"))
-        bitmap = wx.Bitmap.FromBuffer(arr.shape[1], arr.shape[0], arr)
-        bitmap_ctrl.SetBitmap(bitmap)
-        panel.Layout()
+        fit_bitmap(bitmap_ctrl, pil_img, scale)
 
     def on_zoom(self, event):
         """Handle mouse wheel zoom for specific panel."""

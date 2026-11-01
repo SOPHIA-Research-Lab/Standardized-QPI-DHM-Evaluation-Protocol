@@ -119,7 +119,8 @@ def show_help(parent):
         "   python app.py\n"
     )
 
-    dialog = wx.Dialog(parent, title="Help", size=(720, 600))
+    dialog = wx.Dialog(parent, title="Help",
+                       size=wx.Window.FromDIP(wx.Size(720, 600), parent))
     dialog.SetBackgroundColour(wx.Colour(255, 255, 255))
 
     panel = wx.Panel(dialog)

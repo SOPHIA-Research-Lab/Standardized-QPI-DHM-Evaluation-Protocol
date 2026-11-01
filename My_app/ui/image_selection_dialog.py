@@ -3,7 +3,8 @@ class ImageSelectionDialog(wx.Dialog):
     """Dialog for selecting multiple images from notebook tabs."""
     
     def __init__(self, parent, image_names, title="Select Images for Analysis"):
-        super().__init__(parent, title=title, size=(450, 400))
+        super().__init__(parent, title=title,
+                         size=wx.Window.FromDIP(wx.Size(450, 400), parent))
         
         self.image_names = image_names
         self.selected_indices = []

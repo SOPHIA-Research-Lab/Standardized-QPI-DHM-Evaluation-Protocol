@@ -6,30 +6,42 @@ function reconstructed the surface AND popped up a window showing it, and the
 only caller threw the return value away. Computing and displaying are now two
 separate things, and only this half knows about wx.
 """
-import matplotlib.pyplot as plt
+import matplotlib
 import numpy as np
 import wx
 from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
+
+from ui import hidpi
+
+#: Same palette as the TSM histogram and the toolbar icons.
+SUPERFICIE = "#fcfcfb"
+TINTA = "#0b0b0b"
+TINTA_SUAVE = "#52514e"
+REJILLA = "#e5e4e0"
+POSITIVO = "#2a78d6"
+NEGATIVO = "#e34948"
 
 
-def coefficient_figure(coefficients):
+def coefficient_figure(coefficients, escala=1.0):
     """
     Build the coefficient bar chart as a matplotlib figure.
 
     Separate from the dialog so the chart can be rendered and inspected
-    without opening a window.
-    """
-    SUPERFICIE = "#fcfcfb"
-    TINTA = "#0b0b0b"
-    TINTA_SUAVE = "#52514e"
-    REJILLA = "#e5e4e0"
-    POSITIVO = "#2a78d6"
-    NEGATIVO = "#e34948"
+    without opening a window. `escala` is the screen's pixel-per-unit factor:
+    the chart measures 5 x 4 inches whatever it is, but it is drawn with that
+    many more pixels.
 
+    The figure is built directly instead of through pyplot. pyplot attaches
+    the figure to whichever interactive backend is active, and the wx backend
+    doubles the dpi behind your back on a scaled screen: a chart asked for at
+    1000x800 came back 2000x1521 and overflowed the window it had to sit in.
+    """
     valores = np.asarray(coefficients, dtype=float)
     indices = np.arange(1, len(valores) + 1)
 
-    fig = plt.figure(figsize=(5, 4), dpi=100)
+    fig = Figure(figsize=(5, 4), dpi=100 * escala)
+    FigureCanvasAgg(fig)
     fig.patch.set_facecolor(SUPERFICIE)
     ax = fig.add_subplot(111)
     ax.set_facecolor(SUPERFICIE)
@@ -64,7 +76,20 @@ def coefficient_figure(coefficients):
     return fig
 
 
-def show_legendre_reconstruction(superficie, coefficients):
+def surface_image(superficie):
+    """The reconstructed surface as a wx.Image, in viridis."""
+    mapa = matplotlib.colormaps['viridis']
+    rango = float(superficie.max() - superficie.min())
+    norm = (superficie - superficie.min()) / (rango if rango > 1e-12 else 1.0)
+    rgb = (mapa(norm)[:, :, :3] * 255).astype(np.uint8)
+
+    alto, ancho = rgb.shape[:2]
+    imagen = wx.Image(ancho, alto)
+    imagen.SetData(rgb.tobytes())
+    return imagen
+
+
+def show_legendre_reconstruction(superficie, coefficients, parent=None):
     """
     Show the reconstructed background next to the coefficient plot.
 
@@ -74,86 +99,79 @@ def show_legendre_reconstruction(superficie, coefficients):
         Surface rebuilt from the Legendre coefficients.
     coefficients : sequence of float
         The coefficients themselves, plotted on the right-hand panel.
+    parent : wx.Window, optional
+        Window the dialog belongs to.
     """
-    # Create wx.App if needed
-    app_created = False
+    app_creada = False
     app = wx.GetApp()
     if app is None:
         app = wx.App(False)
-        app_created = True
+        app_creada = True
 
-    # Create dialog
-    dlg = wx.Dialog(None, title="Legendre Reconstruction Results",
-                    style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
-                    size=(1100, 550))
+    dlg = wx.Dialog(parent, title="Legendre Reconstruction Results",
+                    style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+    escala = hidpi.scale(dlg)
+
+    principal = wx.BoxSizer(wx.VERTICAL)
+    contenido = wx.BoxSizer(wx.HORIZONTAL)
+
+    # ---------------------------------------------------- the surface
+    panel_izq = wx.Panel(dlg)
+    sizer_izq = wx.BoxSizer(wx.VERTICAL)
+    sizer_izq.Add(wx.StaticText(panel_izq,
+                                label="Legendre-reconstructed background"),
+                  0, wx.ALIGN_CENTER | wx.ALL, 5)
+
+    imagen = surface_image(superficie)
+
+    # The reconstruction is square -- legendre_background works on a grid the
+    # height of the image -- and it used to be squashed into a fixed 500x400,
+    # which distorted it. It is fitted inside the box instead, keeping its
+    # proportions.
+    caja = dlg.FromDIP(wx.Size(400, 360))
+    factor = min(caja.width / imagen.GetWidth(), caja.height / imagen.GetHeight())
+    imagen = imagen.Scale(max(1, int(imagen.GetWidth() * factor)),
+                          max(1, int(imagen.GetHeight() * factor)),
+                          wx.IMAGE_QUALITY_HIGH)
+
+    sizer_izq.Add(wx.StaticBitmap(panel_izq, bitmap=hidpi.bitmap(imagen, dlg)),
+                  0, wx.ALIGN_CENTER | wx.ALL, 5)
+    panel_izq.SetSizer(sizer_izq)
+    contenido.Add(panel_izq, 0, wx.ALL, 5)
+
+    # ---------------------------------------------------- the coefficients
+    panel_der = wx.Panel(dlg)
+    sizer_der = wx.BoxSizer(wx.VERTICAL)
+    sizer_der.Add(wx.StaticText(panel_der, label="Legendre coefficients"),
+                  0, wx.ALIGN_CENTER | wx.ALL, 5)
+
+    fig = coefficient_figure(coefficients, escala)
+    sizer_der.Add(wx.StaticBitmap(panel_der, bitmap=hidpi.figure_bitmap(fig, dlg)),
+                  0, wx.ALIGN_CENTER | wx.ALL, 5)
+    panel_der.SetSizer(sizer_der)
+    contenido.Add(panel_der, 0, wx.ALL, 5)
+
+    principal.Add(contenido, 1, wx.EXPAND | wx.ALL, 10)
+
+    cerrar = wx.Button(dlg, wx.ID_CLOSE, "Close")
+    cerrar.Bind(wx.EVT_BUTTON, lambda evt: dlg.Close())
+    principal.Add(cerrar, 0, wx.ALIGN_CENTER | wx.BOTTOM, 10)
+
+    # The window takes the size its contents need, rather than a fixed one
+    # that was right on the screen it was written on. Clamped so a very wide
+    # reconstruction cannot push it off the display.
+    dlg.SetSizer(principal)
+    principal.Fit(dlg)
+    pantalla = wx.GetClientDisplayRect()
+    dlg.SetSize(wx.Size(min(dlg.GetSize().width, pantalla.width),
+                        min(dlg.GetSize().height, pantalla.height)))
     dlg.Centre()
-    
-    main_sizer = wx.BoxSizer(wx.VERTICAL)
-    content_sizer = wx.BoxSizer(wx.HORIZONTAL)
-    
-    # Left panel: Surface
-    left_panel = wx.Panel(dlg)
-    left_sizer = wx.BoxSizer(wx.VERTICAL)
-    label_surface = wx.StaticText(left_panel, label="Legendre-reconstructed background")
-    left_sizer.Add(label_surface, 0, wx.ALIGN_CENTER | wx.ALL, 5)
-    
-    # Convert surface to colored image
-    from matplotlib import cm
-    viridis = cm.get_cmap('viridis')
-    surf_norm = (superficie - superficie.min()) / (superficie.max() - superficie.min())
-    colored = (viridis(surf_norm)[:, :, :3] * 255).astype(np.uint8)
-    
-    h, w = colored.shape[:2]
-    img_surface = wx.Image(w, h)
-    img_surface.SetData(colored.tobytes())
-    img_surface = img_surface.Scale(500, 400, wx.IMAGE_QUALITY_HIGH)
-    
-    bmp_surface = wx.StaticBitmap(left_panel, bitmap=wx.Bitmap(img_surface))
-    left_sizer.Add(bmp_surface, 1, wx.ALL | wx.EXPAND, 5)
-    left_panel.SetSizer(left_sizer)
-    content_sizer.Add(left_panel, 1, wx.EXPAND | wx.ALL, 5)
-    
-    # Right panel: Coefficients
-    right_panel = wx.Panel(dlg)
-    right_sizer = wx.BoxSizer(wx.VERTICAL)
-    label_coeff = wx.StaticText(right_panel, label="Legendre coefficients")
-    right_sizer.Add(label_coeff, 0, wx.ALIGN_CENTER | wx.ALL, 5)
-    
-    # Create plot
-    fig = coefficient_figure(coefficients)
-    
-    # Convert plot to bitmap
-    canvas = FigureCanvasAgg(fig)
-    canvas.draw()
-    buf = canvas.buffer_rgba()
-    w_fig, h_fig = fig.canvas.get_width_height()
-    plot_array = np.frombuffer(buf, dtype=np.uint8).reshape(h_fig, w_fig, 4)[:, :, :3]
-    
-    img_plot = wx.Image(w_fig, h_fig)
-    img_plot.SetData(plot_array.tobytes())
-    img_plot = img_plot.Scale(500, 400, wx.IMAGE_QUALITY_HIGH)
-    
-    bmp_plot = wx.StaticBitmap(right_panel, bitmap=wx.Bitmap(img_plot))
-    right_sizer.Add(bmp_plot, 1, wx.ALL | wx.EXPAND, 5)
-    right_panel.SetSizer(right_sizer)
-    content_sizer.Add(right_panel, 1, wx.EXPAND | wx.ALL, 5)
-    
-    plt.close(fig)
-    
-    main_sizer.Add(content_sizer, 1, wx.EXPAND | wx.ALL, 10)
-    
-    # Close button
-    btn_close = wx.Button(dlg, wx.ID_CLOSE, "Close")
-    btn_close.Bind(wx.EVT_BUTTON, lambda evt: dlg.Close())
-    main_sizer.Add(btn_close, 0, wx.ALIGN_CENTER | wx.BOTTOM, 10)
-    
-    dlg.SetSizer(main_sizer)
+
     dlg.ShowModal()
     dlg.Destroy()
 
-    if app_created:
+    if app_creada:
         try:
             app.Destroy()
-        except:
+        except Exception:
             pass
-

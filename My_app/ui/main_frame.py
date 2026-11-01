@@ -18,7 +18,8 @@ from analysis.cache import AnalysisCache
 from ui.zone_selector import select_manual_zones
 from ui.threshold_dialog import create_background_mask
 from ui.legendre_viewer import show_legendre_reconstruction
-import matplotlib.pyplot as plt
+from ui.tsm_dialog import ask_tsm_threshold
+from ui import icons
 import subprocess
 import sys
 import os
@@ -38,7 +39,70 @@ class MainFrame(wx.Frame):
 
     def _initialize_components(self):
 # Initialize main components and state variables.
-        self.notebook = ImageNotebook(self)
+        # A control placed straight on a wx.Frame does not inherit the panel
+        # background: the frame paints COLOUR_APPWORKSPACE (#ABABAB here) while
+        # panels paint #F0F0F0, so the workspace showed two different greys
+        # plus the white of the tables. Everything now hangs off one root
+        # panel, which is the usual wxPython arrangement.
+        self.root_panel = wx.Panel(self)
+
+        # Image on top, result tables below, with a sash the user can drag.
+        # The tables used to be added with proportion 0, so they got their
+        # natural height and could not be given more room no matter how many
+        # metric columns there were.
+        self.splitter = wx.SplitterWindow(
+            self.root_panel, style=wx.SP_LIVE_UPDATE | wx.SP_3DSASH)
+        self.splitter.SetMinimumPaneSize(80)
+
+        self.tables_panel = wx.Panel(self.splitter)
+
+        # A second sash, between the two tables. They used to share a sizer at
+        # proportion 1 each, so the mask table -- one row per image -- took
+        # half the space while the metric table, which carries every column,
+        # was squeezed into a sliver.
+        self.tables_splitter = wx.SplitterWindow(
+            self.tables_panel, style=wx.SP_LIVE_UPDATE | wx.SP_3DSASH)
+        self.tables_splitter.SetMinimumPaneSize(60)
+
+        tables_sizer = wx.BoxSizer(wx.VERTICAL)
+        tables_sizer.Add(self.tables_splitter, 1, wx.EXPAND)
+        self.tables_panel.SetSizer(tables_sizer)
+
+        # An AuiNotebook with no pages paints its own grey (#DCDCDC) instead of
+        # the panel background (#F0F0F0), and SetBackgroundColour on it has no
+        # effect -- measured on a capture of the real window. With no image
+        # there is nothing for it to show anyway, so it is hidden and a plain
+        # panel takes its place saying what to do.
+        self.workspace = wx.Panel(self.splitter)
+
+        self.welcome_panel = wx.Panel(self.workspace)
+        welcome_sizer = wx.BoxSizer(wx.VERTICAL)
+        mensaje = wx.StaticText(
+            self.welcome_panel,
+            label="No image open\n\n"
+                  "File > Open (Ctrl+O) to load a compensated phase map,\n"
+                  "or pick one from the Samples menu.",
+            style=wx.ALIGN_CENTRE_HORIZONTAL)
+        fuente = mensaje.GetFont()
+        fuente.SetPointSize(fuente.GetPointSize() + 1)
+        mensaje.SetFont(fuente)
+        mensaje.SetForegroundColour(
+            wx.SystemSettings.GetColour(wx.SYS_COLOUR_GRAYTEXT))
+        welcome_sizer.AddStretchSpacer()
+        welcome_sizer.Add(mensaje, 0, wx.ALIGN_CENTER)
+        welcome_sizer.AddStretchSpacer()
+        self.welcome_panel.SetSizer(welcome_sizer)
+
+        self.notebook = ImageNotebook(self.workspace)
+        self.notebook.Hide()
+
+        workspace_sizer = wx.BoxSizer(wx.VERTICAL)
+        workspace_sizer.Add(self.welcome_panel, 1, wx.EXPAND)
+        workspace_sizer.Add(self.notebook, 1, wx.EXPAND)
+        self.workspace.SetSizer(workspace_sizer)
+
+        # Unsplit until there is something to show below.
+        self.splitter.Initialize(self.workspace)
         self.metric_table = None
         self.mask_table = None
         self.is_sample_image = False
@@ -59,7 +123,12 @@ class MainFrame(wx.Frame):
         self._legendre_params_shown = False
         self._legendre_limit = None
         self._legendre_order = None
-        self.CreateStatusBar()
+        # Three fields: what just happened, which image is in front, and how
+        # much has been measured. It used to be created and never written to.
+        self.CreateStatusBar(3)
+        self.SetStatusWidths([-1, 230, 170])
+        self.SetStatusText("Ready")
+        self._sort_state = {}
         
         # Metric IDs to functions mapping
         # The catalogue lives in analysis/catalog.py: it defines the
@@ -97,8 +166,10 @@ class MainFrame(wx.Frame):
         menubar.Append(samples_menu.create(self, self.notebook), "&Samples")
         menubar.Append(analysis_menu.create(self, self.notebook), "&Analysis")
         menubar.Append(self._create_imagej_menu(), "&ImageJ")
+        menubar.Append(self._create_view_menu(), "&View")
         menubar.Append(help_menu.create(self), "&Help")
         self.SetMenuBar(menubar)
+        self._setup_toolbar()
 
         self.imagej_tab_map = {}  # Maps ImageJ image title -> notebook tab index
 
@@ -108,6 +179,105 @@ class MainFrame(wx.Frame):
         # demand by _ensure_imagej_polling() the first time an image is sent.
         self.imagej_timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_check_imagej_updates, self.imagej_timer)
+
+    def _setup_toolbar(self):
+        """
+        The actions that make up most of the use, one click away.
+
+        An AuiToolBar rather than the frame's own: it gives the overflow
+        chevron, so when the window is too narrow the tools that do not fit
+        fold into a dropdown instead of being cut off. View > Toolbar hides it
+        altogether.
+
+        The icons are drawn in ui/icons.py. Stock wx art had "Background
+        metrics" and "Global metrics" as two near-identical list glyphs, which
+        said nothing about what either one does.
+        """
+        from menus import analysis_menu
+
+        # The bar and its fold button share a row. The button has to live
+        # OUTSIDE the bar: hidden inside it, there would be nothing left to
+        # click to bring the bar back.
+        self.toolbar_row = wx.Panel(self.root_panel)
+
+        self.toolbar = wx.aui.AuiToolBar(
+            self.toolbar_row,
+            style=wx.aui.AUI_TB_DEFAULT_STYLE | wx.aui.AUI_TB_HORZ_TEXT)
+        # No SetToolBitmapSize here: in wxAUI it is a documented no-op --
+        # GetToolBitmapSize answers a hardcoded 16x15 whatever you pass it --
+        # and the size that counts is the one the bitmaps carry.
+
+        def herramienta(etiqueta, nombre_icono, manejador, ayuda):
+            item = self.toolbar.AddTool(wx.ID_ANY, etiqueta,
+                                        icons.icon(nombre_icono, 24, self),
+                                        short_help_string=ayuda)
+            self.Bind(wx.EVT_MENU, manejador, item)
+            return item
+
+        def separador():
+            self.toolbar.AddSeparator()
+
+        herramienta("Open", 'open', self.on_open,
+                    "Open a phase image or .mat file (Ctrl+O)")
+        herramienta("Save", 'save', self.on_save,
+                    "Export the result tables to Excel (Ctrl+S)")
+        separador()
+        herramienta("Background", 'background',
+                    lambda evt: analysis_menu._show_module1_dialog(self),
+                    "Module I - residual background phase variance")
+        herramienta("Global", 'global',
+                    lambda evt: analysis_menu._show_module2_dialog(self),
+                    "Module II - global phase distortion")
+        herramienta("Ground truth", 'ground_truth',
+                    lambda evt: analysis_menu._show_module3_dialog(self),
+                    "Module III - comparison against a reference image")
+        herramienta("Complexity", 'complexity', self.on_computational_complexity,
+                    "Module IV - computational complexity (needs Linux or WSL2)")
+        separador()
+        herramienta("Clear", 'clear', self.on_clear,
+                    "Close every image and drop the tables (Ctrl+L)")
+
+        self.toolbar.Realize()
+
+        self.toolbar_toggle = wx.BitmapButton(
+            self.toolbar_row, bitmap=icons.icon('chevron_up', 16, self),
+            style=wx.BORDER_NONE)
+        self.toolbar_toggle.SetToolTip("Hide the toolbar (Ctrl+T)")
+        self.toolbar_toggle.Bind(wx.EVT_BUTTON,
+                                 lambda evt: self.on_toggle_toolbar(None))
+
+        fila = wx.BoxSizer(wx.HORIZONTAL)
+        fila.Add(self.toolbar, 1, wx.EXPAND)
+        fila.Add(self.toolbar_toggle, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        self.toolbar_row.SetSizer(fila)
+
+    def _create_view_menu(self):
+        """A place to fold the toolbar away."""
+        menu = wx.Menu()
+        self.toolbar_item = menu.AppendCheckItem(
+            wx.ID_ANY, "&Toolbar\tCtrl+T", "Show or hide the toolbar")
+        self.toolbar_item.Check(True)
+        self.Bind(wx.EVT_MENU, self.on_toggle_toolbar, self.toolbar_item)
+        return menu
+
+    def on_toggle_toolbar(self, event):
+        """
+        Fold the bar away, or bring it back.
+
+        Called from the button, from View > Toolbar and from Ctrl+T, so the
+        three stay in step whichever one is used. The row itself never hides:
+        the button lives there and has to remain reachable.
+        """
+        visible = not self.toolbar.IsShown()
+        self.toolbar.Show(visible)
+        self.toolbar_item.Check(visible)
+        self.toolbar_toggle.SetBitmap(
+            icons.icon('chevron_up' if visible else 'chevron_down', 16, self))
+        self.toolbar_toggle.SetToolTip(
+            "Hide the toolbar (Ctrl+T)" if visible
+            else "Show the toolbar (Ctrl+T)")
+        self.toolbar_row.Layout()
+        self.root_panel.Layout()
 
     def _create_imagej_menu(self):
         """Create the ImageJ integration menu."""
@@ -142,10 +312,53 @@ class MainFrame(wx.Frame):
 
     def _setup_layout(self):
         # Set up the main layout.
-        sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(self.notebook, 1, wx.EXPAND)
-        self.SetSizer(sizer)
+        panel_sizer = wx.BoxSizer(wx.VERTICAL)
+        panel_sizer.Add(self.toolbar_row, 0, wx.EXPAND)
+        panel_sizer.Add(self.splitter, 1, wx.EXPAND)
+        self.root_panel.SetSizer(panel_sizer)
+
+        frame_sizer = wx.BoxSizer(wx.VERTICAL)
+        frame_sizer.Add(self.root_panel, 1, wx.EXPAND)
+        self.SetSizer(frame_sizer)
         self.update_analysis_menu_state()
+
+    def _arrange_tables(self):
+        """
+        Put whichever tables exist into the lower pane.
+
+        With both present the mask table goes on top with just the height it
+        needs -- it holds one row per image -- and the metric table takes the
+        rest, with a sash between them so either can be given more room.
+        """
+        mascaras, metricas = self.mask_table, self.metric_table
+
+        if mascaras and metricas:
+            if not self.tables_splitter.IsSplit():
+                self.tables_splitter.SplitHorizontally(mascaras, metricas,
+                                                       self.FromDIP(130))
+        elif mascaras or metricas:
+            unica = mascaras or metricas
+            if self.tables_splitter.IsSplit():
+                self.tables_splitter.Unsplit()
+            self.tables_splitter.Initialize(unica)
+            unica.Show()
+
+        self.tables_panel.Layout()
+
+    def _show_tables_pane(self):
+        """Reveal the lower pane the first time a table is created."""
+        if not self.splitter.IsSplit():
+            alto = max(self.FromDIP(220), self.GetClientSize().height // 3)
+            self.splitter.SplitHorizontally(self.workspace, self.tables_panel,
+                                            -alto)
+        self.tables_panel.Layout()
+        self.root_panel.Layout()
+
+    def _hide_tables_pane(self):
+        """Give the whole window back to the image when no table is left."""
+        if self.splitter.IsSplit():
+            self.splitter.Unsplit(self.tables_panel)
+        self.root_panel.Layout()
 
     def _bind_events(self):
         # Bind event handlers.
@@ -154,7 +367,110 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_CLOSE, self.on_close)
         self.Bind(wx.EVT_BUTTON, self.on_save)
 
+    #: Shade for the odd rows. wx only offers EnableAlternateRowColours on
+    #: VIRTUAL list controls (it asserts on wxLC_VIRTUAL), and these are not
+    #: virtual, so the stripes are painted row by row in _stripe().
+    ALTERNATE_ROW = wx.Colour(0xF5, 0xF7, 0xFA)
+
+    @staticmethod
+    def _stripe(table):
+        """Re-apply the alternating row shade, after inserting or sorting."""
+        blanco = wx.Colour(0xFF, 0xFF, 0xFF)
+        for row in range(table.GetItemCount()):
+            table.SetItemBackgroundColour(
+                row, MainFrame.ALTERNATE_ROW if row % 2 else blanco)
+
+    @staticmethod
+    def _style_table(table):
+        """A bold header: twenty columns are hard to track otherwise."""
+        cabecera = wx.ItemAttr()
+        fuente = table.GetFont()
+        fuente = fuente.Bold()
+        cabecera.SetFont(fuente)
+        table.SetHeaderAttr(cabecera)
+
+    def _on_column_click(self, event, table, raw_store):
+        """Sort by the clicked column; click again to reverse."""
+        col = event.GetColumn()
+        anterior = self._sort_state.get(id(table))
+        ascendente = not (anterior is not None and anterior[0] == col and anterior[1])
+        self._sort_state[id(table)] = (col, ascendente)
+        self._sort_table(table, raw_store, col, ascendente)
+
+    @staticmethod
+    def _sort_table(table, raw_store, col, ascendente):
+        """
+        Reorder the rows by one column.
+
+        Sorting uses the stored full-precision number when there is one, so
+        columns order numerically rather than as text -- "10" after "9", not
+        before it. Columns without a raw value fall back to their text.
+        """
+        n_cols = table.GetColumnCount()
+        nombre_col = table.GetColumn(col).GetText()
+
+        filas = []
+        for row in range(table.GetItemCount()):
+            textos = [table.GetItemText(row, c) for c in range(n_cols)]
+            crudo = raw_store.get(textos[0], {}).get(nombre_col)
+            filas.append((crudo, textos))
+
+        def clave(par):
+            valor, textos = par
+            if isinstance(valor, float):
+                # NaN last, whichever way round the sort runs
+                if valor != valor:
+                    return (2, 0.0, "")
+                return (0, valor, "")
+            return (1, 0.0, textos[col].lower())
+
+        filas.sort(key=clave, reverse=not ascendente)
+
+        table.DeleteAllItems()
+        for i, (_, textos) in enumerate(filas):
+            table.InsertItem(i, textos[0])
+            for c in range(1, n_cols):
+                table.SetItem(i, c, textos[c])
+        MainFrame._stripe(table)
+
+    def _update_status_image(self):
+        """Second field: the image in front and how it was loaded."""
+        page = self.notebook.get_current_page()
+        name = self.notebook.get_current_image_name()
+        if page is None or name is None:
+            self.SetStatusText("", 1)
+            return
+
+        fase = getattr(page, 'phase', None)
+        if fase is not None:
+            alto, ancho = fase.shape[:2]
+            origen = "complex field" if getattr(page, 'is_mat_complex', False) else "image"
+            self.SetStatusText("%s  -  %d x %d  -  %s" % (name, ancho, alto, origen), 1)
+        else:
+            self.SetStatusText(name, 1)
+
+    def _update_status_counts(self):
+        """Third field: how much of the table is filled."""
+        if self.metric_table is None or self.metric_table.GetItemCount() == 0:
+            self.SetStatusText("", 2)
+            return
+        filas = self.metric_table.GetItemCount()
+        columnas = max(0, self.metric_table.GetColumnCount() - 1)
+        self.SetStatusText("%d image(s), %d metric column(s)" % (filas, columnas), 2)
+
+    def _update_workspace(self):
+        """Show the notebook only while it actually holds an image."""
+        tiene_imagenes = self.notebook.GetPageCount() > 0
+        if self.notebook.IsShown() != tiene_imagenes:
+            self.notebook.Show(tiene_imagenes)
+            self.welcome_panel.Show(not tiene_imagenes)
+            self.workspace.Layout()
+
     def update_analysis_menu_state(self):
+        self._update_workspace()
+        self._update_status_image()
+        self._update_status_counts()
+
         # Update Analysis menu state based on current image type.
         menubar = self.GetMenuBar()
         analysis_index = menubar.FindMenu("&Analysis")
@@ -209,16 +525,21 @@ class MainFrame(wx.Frame):
         if self.metric_table is not None:
             return
         
-        self.metric_table = wx.ListCtrl(self, style=wx.LC_REPORT)
-        self.metric_table.InsertColumn(0, "Image Name", width=250)
+        self.metric_table = wx.ListCtrl(self.tables_splitter, style=wx.LC_REPORT)
+        self._style_table(self.metric_table)
+        self.metric_table.InsertColumn(0, "Image Name", width=self.FromDIP(250))
+        self.metric_table.Bind(
+            wx.EVT_LIST_COL_CLICK,
+            lambda evt: self._on_column_click(evt, self.metric_table,
+                                              self._metric_values))
 
         self.metric_table.Bind(wx.EVT_CONTEXT_MENU, self.on_metric_table_context_menu)
        
-        if self.GetSizer():
-            self.GetSizer().Add(self.metric_table, 0, wx.EXPAND | wx.ALL, 5)
-            self.Layout()
+        self._arrange_tables()
+        self._show_tables_pane()
 
     def _ensure_column(self, col_name: str, width: int = 120):
+        width = self.FromDIP(width)
         if not self.metric_table:
             return
         
@@ -256,6 +577,7 @@ class MainFrame(wx.Frame):
         
         new_row = self.metric_table.GetItemCount()
         self.metric_table.InsertItem(new_row, image_name)
+        self._stripe(self.metric_table)
         return new_row
 
     def update_table_with_zones(self, image_name, metric_column, value, zone_stats=None, num_zones=0):
@@ -368,7 +690,12 @@ class MainFrame(wx.Frame):
         if self.mask_table is not None:
             return
             
-        self.mask_table = wx.ListCtrl(self, style=wx.LC_REPORT)
+        self.mask_table = wx.ListCtrl(self.tables_splitter, style=wx.LC_REPORT)
+        self._style_table(self.mask_table)
+        self.mask_table.Bind(
+            wx.EVT_LIST_COL_CLICK,
+            lambda evt: self._on_column_click(evt, self.mask_table,
+                                              self._mask_values))
         
         columns = [
             ("Image Name", 200), ("Threshold", 100), ("Total Pixels", 100),
@@ -379,8 +706,8 @@ class MainFrame(wx.Frame):
         for i, (name, width) in enumerate(columns):
             self.mask_table.InsertColumn(i, name, width=width)
 
-        self.GetSizer().Add(self.mask_table, 0, wx.EXPAND | wx.ALL, 5)
-        self.Layout()
+        self._arrange_tables()
+        self._show_tables_pane()
         self.mask_table.Bind(wx.EVT_CONTEXT_MENU, self.on_mask_table_context_menu)
 
     def update_mask_table(self, image_name, threshold, total_pixels, background_pixels, 
@@ -415,6 +742,7 @@ class MainFrame(wx.Frame):
                 self.mask_table.SetItem(found_row, col, value)
         else:
             index = self.mask_table.InsertItem(self.mask_table.GetItemCount(), image_name)
+            self._stripe(self.mask_table)
             for col, value in enumerate(data, start=1):
                 self.mask_table.SetItem(index, col, value)
 
@@ -523,7 +851,12 @@ class MainFrame(wx.Frame):
                     pass
 
     def _destroy_tables(self):
-        # Safely destroy both tables.
+        # Detach from the sash BEFORE destroying. Unsplitting afterwards left
+        # the splitter holding pointers to destroyed windows, which took the
+        # process down with a segfault.
+        if self.tables_splitter.IsSplit():
+            self.tables_splitter.Unsplit()
+
         if self.metric_table:
             self.metric_table.Destroy()
             self.metric_table = None
@@ -531,6 +864,8 @@ class MainFrame(wx.Frame):
         if self.mask_table:
             self.mask_table.Destroy()
             self.mask_table = None
+
+        self._hide_tables_pane()
 
     # Export handlers
     def on_metric_table_context_menu(self, event):
@@ -1162,14 +1497,16 @@ class MainFrame(wx.Frame):
                 self,
                 summary_text,
                 "Metrics Calculation Cancelled" if cancelado else "Metrics Calculation Complete",
-                size=(600, 400)
+                size=self.FromDIP(wx.Size(600, 400))
             )
             dlg.ShowModal()
             dlg.Destroy()
         except:
             wx.MessageBox(summary_text, "Metrics Calculation Complete", wx.ICON_INFORMATION)
         
-        plt.close('all')
+        self._update_status_counts()
+        self.SetStatusText(
+            "Cancelled" if cancelado else "Metrics calculated")
 
     def _precalculate_masks(self, sample, image_name, metrics_dict, zones_mode='per_image'):
         # Pre-calculate all needed masks for an image BEFORE processing metrics.
@@ -1501,7 +1838,15 @@ class MainFrame(wx.Frame):
             params = inspect.signature(metric_func).parameters
             
             try:
-                if 'use_unwrap' in params:
+                if metric_id.startswith('tsm_'):
+                    umbral = self._get_tsm_threshold(
+                        image_name, processed_sample, needs_unwrap)
+                    if umbral is None:
+                        return self._skip(
+                            "the TSM threshold dialog was cancelled")
+                    value = metric_func(processed_sample, use_unwrap=False,
+                                        threshold=umbral)
+                elif 'use_unwrap' in params:
                     # Already unwrapped above when needed: asking again here
                     # would unwrap twice and change the result.
                     value = metric_func(processed_sample, use_unwrap=False)
@@ -1556,6 +1901,30 @@ class MainFrame(wx.Frame):
         return h.hexdigest()
     
     
+    def _get_tsm_threshold(self, image_name, sample, unwrapped):
+        """
+        Where to binarise for TSM, asked once per image and reused.
+
+        The published formula fixes everything except the threshold, and
+        leaving it at a local mean made TSM read ~50% whatever the data, so
+        the choice is put in front of the user on the histogram. Same policy
+        as the background segmentation: one answer per image, shared by every
+        TSM variant of that image, re-asked only if the image itself changed.
+        """
+        clave = (image_name, bool(unwrapped))
+        huella = self._sample_fingerprint(sample)
+
+        guardado = self._cache.tsm_thresholds.get(clave)
+        if guardado is not None and guardado[0] == huella:
+            return guardado[1]
+
+        umbral = ask_tsm_threshold(self, sample, image_name)
+        if umbral is None:
+            return None
+
+        self._cache.tsm_thresholds[clave] = (huella, umbral)
+        return umbral
+
     def _get_unwrapped_sample(self, image_name, sample):
         """
         Unwrap a phase image ONCE per image and reuse the result.
