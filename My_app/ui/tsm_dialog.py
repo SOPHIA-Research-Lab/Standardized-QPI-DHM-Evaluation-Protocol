@@ -38,9 +38,6 @@ class TsmThresholdDialog(wx.Dialog):
         step = max(1, max(self.phi_nor.shape) // 512)
         self.preview = self.phi_nor[::step, ::step] if step > 1 else self.phi_nor
 
-        # TSM for each of the slider's 1001 positions, worked out once.
-        self.tsm_table = self._build_tsm_table()
-
         self._build_ui(image_name)
         self._timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, lambda evt: self._refresh(), self._timer)
@@ -48,14 +45,6 @@ class TsmThresholdDialog(wx.Dialog):
         # The size its contents ask for: a fixed one fits only one screen.
         self.GetSizer().Fit(self)
         self.CentreOnParent()
-
-    def _build_tsm_table(self):
-        """TSM at every slider position: exact, and O(1) to read back."""
-        # Counting per step cost 22 ms; one sort answers all 1001 positions.
-        ordered = np.sort(self.phi_nor.ravel())
-        edges = np.arange(1001) / 1000.0
-        return (100.0 * np.searchsorted(ordered, edges, side='right')
-                / ordered.size)
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self, image_name):
@@ -132,17 +121,15 @@ class TsmThresholdDialog(wx.Dialog):
         self.EndModal(wx.ID_OK)
 
     # --------------------------------------------------------------- paint
-    def _tsm(self):
-        """TSM for the current threshold, read off the table."""
-        return self.tsm_table[int(round(self.threshold * 1000))]
-
     def _update_label(self):
-        """Show the threshold, the resulting TSM, and whether it is bimodal."""
+        """Show the threshold, and whether the histogram is bimodal.
+
+        The resulting metric is deliberately not previewed here: this window
+        computed it on its own, and the two would have to be kept in step for
+        the reading to mean anything."""
         warning = "" if self.info['ok'] else \
             "   (no second peak: the histogram is not bimodal)"
-        self.readout.SetLabel(
-            "Threshold %.4f        TSM %.2f %%%s"
-            % (self.threshold, self._tsm(), warning))
+        self.readout.SetLabel("Threshold %.4f%s" % (self.threshold, warning))
 
     def _refresh(self):
         """Redraw both previews for the current threshold."""

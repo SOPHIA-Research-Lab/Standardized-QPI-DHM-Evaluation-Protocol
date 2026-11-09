@@ -1283,6 +1283,10 @@ class MainFrame(wx.Frame):
         if not self._ensure_ground_truth_loaded(metrics_dict):
             return
         self._unwrap_warning_shown = False
+        # Asked once per RUN, not once per session: the point of the dialog is
+        # that the operator chooses the level, and keeping the answer across
+        # runs meant the same image could never be measured at a second one.
+        self._cache.tsm_thresholds.clear()
 
         # One question for the whole batch, asked up front.
         needsUnwrap = any(
