@@ -5,97 +5,80 @@ from PIL import Image
 from analysis.module1 import utilitiesRBPV as utRBPV
 
 
+def _as_phase(variable):
+    """A .mat variable as phase: real means radians already, complex needs the
+    argument taken. What reaches a metric is always the phase, never a field."""
+    array = np.asarray(variable)
+    return np.angle(array) if np.iscomplexobj(array) else array
+
+
 def load_ground_truth(path):
-    """ Load ground-truth image from file."""
+    """Load a ground-truth phase map from a .mat file or an image."""
     try:
-        # if is a file type .mat
         if path.endswith('.mat'):
             import scipy.io as sio
-            mat_data = sio.loadmat(path)
-            # adjust according to the structure of your .mat
-            if 'phase' in mat_data:
-                return mat_data['phase']
+            matData = sio.loadmat(path)
+            if 'phase' in matData:
+                return _as_phase(matData['phase'])
             else:
-                # Take the first field it finds
-                for key in mat_data.keys():
-                    if not key.startswith('__'):
-                        return mat_data[key]
+                # No "phase" field: take the first one that is not metadata.
+                for fieldName in matData.keys():
+                    if not fieldName.startswith('__'):
+                        return _as_phase(matData[fieldName])
         else:
-            # If it's a normal image
-            img = Image.open(path)
-            grayscale = img.convert("L")
-            img_array = np.array(grayscale, dtype=float)
-            return utRBPV.grayscaleToPhase(img_array)
-    except Exception as e:
-        raise ValueError(f"Error loading ground-truth: {str(e)}")
+            grayscale = Image.open(path).convert("L")
+            grayLevels = np.array(grayscale, dtype=float)
+            return utRBPV.gray_to_phase(grayLevels)
+    except Exception as error:
+        raise ValueError(f"Error loading ground-truth: {str(error)}")
 
 
 def _prepare_sample_and_gt(sample, ground_truth):
-    """
-    Bring sample and ground truth to a comparable form.
-
-    Neither side is unwrapped. A ground truth loaded from an 8-bit image is
-    a linear rescale of the intensity to [-pi, pi], not a wrapped phase map
-    with genuine 2*pi jumps, so unwrapping it invented discontinuities: it
-    moved ~16% of the reference pixels by more than pi and stretched its
-    range from [-3.1, 3.1] to [-33, 50] rad. The reference has to stay as
-    loaded for the comparison to mean anything.
-    """
-    
-    # Convert sample to numpy if it's PIL
+    """Bring sample and ground truth to a comparable form, neither unwrapped."""
+    # Unwrapping an 8-bit reference invents 2*pi jumps it never had.
     if isinstance(sample, Image.Image):
         grayscale = sample.convert("L")
-        sample_array = np.array(grayscale, dtype=float)
-        sample_phase = utRBPV.grayscaleToPhase(sample_array)
+        grayLevels = np.array(grayscale, dtype=float)
+        samplePhase = utRBPV.gray_to_phase(grayLevels)
     else:
-        sample_phase = sample
+        samplePhase = sample
 
-    sample_phase = np.asarray(sample_phase, dtype=np.float64)
+    samplePhase = np.asarray(samplePhase, dtype=np.float64)
     ground_truth = np.asarray(ground_truth, dtype=np.float64)
 
-    if sample_phase.shape != ground_truth.shape:
+    if samplePhase.shape != ground_truth.shape:
         raise ValueError(
-            f"Shape mismatch between sample {sample_phase.shape} and "
+            f"Shape mismatch between sample {samplePhase.shape} and "
             f"ground-truth {ground_truth.shape}. Both images must have "
             f"the same dimensions to be compared."
         )
 
-    return sample_phase, ground_truth
+    return samplePhase, ground_truth
 
 
 def calculate_ssim(sample, ground_truth):
-    """ Calculate Structural Similarity Index (SSIM). """
-    sample_phase, ground_truth = _prepare_sample_and_gt(sample, ground_truth)
+    """Structural Similarity Index: 1 is identical, 0 is unrelated."""
+    samplePhase, ground_truth = _prepare_sample_and_gt(sample, ground_truth)
 
-    gt_min = ground_truth.min()
-    gt_max = ground_truth.max()
-    gt_range = gt_max - gt_min
+    # Both normalised with the REFERENCE range, so amplitude differences stay.
+    referenceMin = ground_truth.min()
+    referenceRange = ground_truth.max() - referenceMin
 
-    sample_norm = (sample_phase - gt_min) / gt_range
-    gt_norm = (ground_truth - gt_min) / gt_range
+    sampleNormalised = (samplePhase - referenceMin) / referenceRange
+    referenceNormalised = (ground_truth - referenceMin) / referenceRange
 
-    # Calculate SSIM
-    ssim_value = ssim(sample_norm, gt_norm, data_range=1.0)
-
-    return ssim_value
+    return ssim(sampleNormalised, referenceNormalised, data_range=1.0)
 
 
 def calculate_mse(sample, ground_truth):
-    """ Calculate Mean Squared Error (MSE)."""
-    sample_phase, ground_truth = _prepare_sample_and_gt(sample, ground_truth)
-
-    mse_value = mean_squared_error(ground_truth, sample_phase)
-
-    return mse_value
+    """Mean Squared Error: 0 is identical, higher means larger differences."""
+    samplePhase, ground_truth = _prepare_sample_and_gt(sample, ground_truth)
+    return mean_squared_error(ground_truth, samplePhase)
 
 
 def calculate_psnr(sample, ground_truth):
-    """ Calculate Peak Signal-to-Noise Ratio (PSNR)."""
-    sample_phase, ground_truth = _prepare_sample_and_gt(sample, ground_truth)
-
-    data_range = ground_truth.max() - ground_truth.min()
-
-    # Calculate PSNR
-    psnr_value = peak_signal_noise_ratio(ground_truth, sample_phase, data_range=data_range)
-
-    return psnr_value
+    """Peak Signal-to-Noise Ratio in dB: higher is better, infinite when MSE is 0."""
+    samplePhase, ground_truth = _prepare_sample_and_gt(sample, ground_truth)
+    referenceRange = ground_truth.max() - ground_truth.min()
+    return peak_signal_noise_ratio(ground_truth, samplePhase,
+                                   data_range=referenceRange)

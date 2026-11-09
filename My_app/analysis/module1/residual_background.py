@@ -11,344 +11,337 @@ def unwrap_with_scikit(wrapped_phase: np.ndarray) -> np.ndarray:
 
 
 def std_background(img: np.ndarray, mask: Optional[np.ndarray] = None):
-    """Calculate standard deviation of background."""
-
-    values = img[mask] if mask is not None else img.flatten()
-    # Returned at full precision: this was the only metric in the module that
-    # rounded (to 4 decimals), which hid differences below 1e-4 and did not
-    # even match its own zone branch above, where the mean is not rounded.
-    return float(np.std(values))
+    """Standard deviation of the background phase, in radians."""
+    backgroundValues = img[mask] if mask is not None else img.flatten()
+    # Full precision: rounding to 4 decimals here hid differences below 1e-4.
+    return float(np.std(backgroundValues))
 
 
 def mean_absolute_deviation_background(img: np.ndarray, mask: Optional[np.ndarray] = None):
-    """Calculate Mean Absolute Deviation (MAD) of background."""
-
-    values = img[mask] if mask is not None else img.flatten()
-    mean_val = np.mean(values)
-    mad = float(np.mean(np.abs(values - mean_val)))
-    return mad
+    """Mean absolute deviation of the background phase, in radians."""
+    backgroundValues = img[mask] if mask is not None else img.flatten()
+    meanValue = np.mean(backgroundValues)
+    return float(np.mean(np.abs(backgroundValues - meanValue)))
 
 
 def mean_background(img: np.ndarray, mask: Optional[np.ndarray] = None):
-    """
-    Mean phase level of the background (the piston term).
-
-    Reported alongside STD and RMS because the three are tied by an exact
-    identity:
-
-        RMS^2 = mean^2 + STD^2
-
-    RMS is therefore not independent of STD: the only thing it adds is the
-    mean. Measuring that mean explicitly makes the piston visible instead of
-    leaving it buried inside RMS, and lets the three figures be checked
-    against each other.
-
-    Interpretation depends on how the image was loaded:
-
-    - From a complex .mat field the phase is physical, so this is the
-      residual piston left by the compensation. A well compensated
-      background sits near zero.
-    - From an 8-bit image file the phase comes from grayscaleToPhase, a
-      linear remap of intensity to [-pi, pi], so this value tracks the mean
-      brightness of the hologram rather than anything optical.
-
-    Parameters
-    ----------
-    img : ndarray (float)
-        Phase map in radians.
-    mask : ndarray (bool), optional
-        True on background pixels. Whole image when omitted.
-    manual : bool, optional
-        Select rectangular zones interactively (default: False).
-    num_zones : int, optional
-        Number of zones to request when manual is True.
-
-    Returns
-    -------
-    float
-        Mean background phase, in radians, when manual is False.
-    tuple(float, list)
-        Mean over the zones and the per-zone statistics, when manual is True.
-    """
-
-    values = img[mask] if mask is not None else img.flatten()
-    return float(np.mean(values))
+    """Mean background phase level, the piston term, in radians."""
+    # RMS^2 = mean^2 + STD^2, so the piston is what RMS adds over STD.
+    backgroundValues = img[mask] if mask is not None else img.flatten()
+    return float(np.mean(backgroundValues))
 
 
 def rms_background(img: np.ndarray, mask: Optional[np.ndarray] = None):
-    """Calculate Root Mean Square (RMS) of background."""
-
-
-    values = img[mask] if mask is not None else img.flatten()
-
-    # RMS = sqrt(mean(x^2))
-    rms_val = float(np.sqrt(np.mean(values ** 2)))
-
-    return rms_val
+    """Root mean square of the background phase: sqrt(mean(x^2)), in radians."""
+    backgroundValues = img[mask] if mask is not None else img.flatten()
+    return float(np.sqrt(np.mean(backgroundValues ** 2)))
 
 
 def pv_background(img: np.ndarray, mask: Optional[np.ndarray] = None):
-    """Calculate Peak-to-Valley (PV) of background."""
-
-    values = img[mask] if mask is not None else img.flatten()
-    pv_val = float(np.max(values) - np.min(values))
-    return pv_val
+    """Peak-to-valley of the background phase: max minus min, in radians."""
+    backgroundValues = img[mask] if mask is not None else img.flatten()
+    return float(np.max(backgroundValues) - np.min(backgroundValues))
 
 
 def _fwhm_from_values(values: np.ndarray, bins: int = 100) -> float:
-    """Compute FWHM via histogram half-maximum with linear interpolation."""
-    vals = np.asarray(values).ravel()
-    vals = vals[~np.isnan(vals)]
-    if vals.size < 5:
+    """Full width at half maximum of the histogram, interpolated linearly."""
+    finiteValues = np.asarray(values).ravel()
+    finiteValues = finiteValues[~np.isnan(finiteValues)]
+    if finiteValues.size < 5:
         return np.nan
 
-    hist, bin_edges = np.histogram(vals, bins=bins)
-    if not np.any(hist):
+    counts, binEdges = np.histogram(finiteValues, bins=bins)
+    if not np.any(counts):
         return np.nan
 
-    centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-    peak_idx = int(np.argmax(hist))
-    peak = float(hist[peak_idx])
-    if peak <= 0:
+    binCentres = 0.5 * (binEdges[:-1] + binEdges[1:])
+    peakIndex = int(np.argmax(counts))
+    peakHeight = float(counts[peakIndex])
+    if peakHeight <= 0:
         return np.nan
-    half = 0.5 * peak
+    halfHeight = 0.5 * peakHeight
 
-    left_idx = None
-    for i in range(peak_idx, 0, -1):
-        if hist[i-1] <= half <= hist[i]:
-            x1, y1 = centers[i-1], hist[i-1]
-            x2, y2 = centers[i], hist[i]
-            t = (half - y1) / (y2 - y1 + 1e-12)
-            left_idx = x1 + t * (x2 - x1)
+    # Walk left from the peak to where the histogram crosses half maximum.
+    leftCrossing = None
+    for binIndex in range(peakIndex, 0, -1):
+        if counts[binIndex - 1] <= halfHeight <= counts[binIndex]:
+            xLow, yLow = binCentres[binIndex - 1], counts[binIndex - 1]
+            xHigh, yHigh = binCentres[binIndex], counts[binIndex]
+            fraction = (halfHeight - yLow) / (yHigh - yLow + 1e-12)
+            leftCrossing = xLow + fraction * (xHigh - xLow)
             break
 
-    right_idx = None
-    for i in range(peak_idx, len(hist)-1):
-        if hist[i] >= half >= hist[i+1]:
-            x1, y1 = centers[i], hist[i]
-            x2, y2 = centers[i+1], hist[i+1]
-            t = (half - y1) / (y2 - y1 + 1e-12)
-            right_idx = x1 + t * (x2 - x1)
+    rightCrossing = None
+    for binIndex in range(peakIndex, len(counts) - 1):
+        if counts[binIndex] >= halfHeight >= counts[binIndex + 1]:
+            xLow, yLow = binCentres[binIndex], counts[binIndex]
+            xHigh, yHigh = binCentres[binIndex + 1], counts[binIndex + 1]
+            fraction = (halfHeight - yLow) / (yHigh - yLow + 1e-12)
+            rightCrossing = xLow + fraction * (xHigh - xLow)
             break
 
-    if left_idx is None or right_idx is None:
+    # No crossing on one of the sides: the peak sits against the edge.
+    if leftCrossing is None or rightCrossing is None:
         return np.nan
-    return float(right_idx - left_idx)
+    return float(rightCrossing - leftCrossing)
 
 
 def fwhm_background(img: np.ndarray, mask: Optional[np.ndarray] = None):
-    """Calculate FWHM of background phase noise using histogram method."""
-
-    values = img[mask] if mask is not None else img.ravel()
-    fwhm_val = _fwhm_from_values(values, bins=100)
-    return fwhm_val
+    """FWHM of the background phase histogram: how spread out the noise is."""
+    backgroundValues = img[mask] if mask is not None else img.ravel()
+    return _fwhm_from_values(backgroundValues, bins=100)
 
 
 def _shannon_entropy(values: np.ndarray, bins: int = 256, base: float = 2.0) -> float:
-    """Calculate Shannon entropy (bits if base=2) from histogram."""
-    vals = np.asarray(values).ravel()
-    vals = vals[np.isfinite(vals)]
-    if vals.size == 0:
+    """Shannon entropy of a histogram of the values, in bits when base is 2."""
+    finiteValues = np.asarray(values).ravel()
+    finiteValues = finiteValues[np.isfinite(finiteValues)]
+    if finiteValues.size == 0:
         return float('nan')
 
-    hist, _ = np.histogram(vals, bins=bins)
-    total = hist.sum()
-    if total == 0:
+    counts, _ = np.histogram(finiteValues, bins=bins)
+    totalCount = counts.sum()
+    if totalCount == 0:
         return float('nan')
 
-    p = hist.astype(float) / total
-    p = p[p > 0.0]
-    if p.size == 0:
+    probabilities = counts.astype(float) / totalCount
+    probabilities = probabilities[probabilities > 0.0]
+    if probabilities.size == 0:
         return 0.0
 
     if base == 2.0:
-        return float(-np.sum(p * np.log2(p)))
-    else:
-        return float(-np.sum(p * (np.log(p) / np.log(base))))
+        return float(-np.sum(probabilities * np.log2(probabilities)))
+    return float(-np.sum(probabilities * (np.log(probabilities) / np.log(base))))
 
 
 def entropy_background(img: np.ndarray, mask: Optional[np.ndarray] = None,
                        bins: int = 256, base: float = 2.0):
-    """Calculate Shannon entropy (histogram-based) of background phase values."""
-
-    values = img[mask] if mask is not None else img.ravel()
-    H = _shannon_entropy(values, bins=bins, base=base)
-    return H
+    """Shannon entropy of the background phase values, in bits."""
+    backgroundValues = img[mask] if mask is not None else img.ravel()
+    return _shannon_entropy(backgroundValues, bins=bins, base=base)
 
 
-def legendre_background(complex_field, mask=None, manual=False, num_zones=2,
+def _looks_wrapped(phase, mask=None, fraction=5e-4):
+    """True when 2*pi cliffs cross the region: the low pass would smear them."""
+    horizontalJump = np.abs(np.diff(phase, axis=1)) > np.pi
+    verticalJump = np.abs(np.diff(phase, axis=0)) > np.pi
+
+    if mask is None:
+        pairCount = horizontalJump.size + verticalJump.size
+    else:
+        # Only pairs INSIDE the background, so a hard sample edge is not a wrap.
+        horizontalPair = mask[:, 1:] & mask[:, :-1]
+        verticalPair = mask[1:, :] & mask[:-1, :]
+        horizontalJump &= horizontalPair
+        verticalJump &= verticalPair
+        pairCount = int(np.count_nonzero(horizontalPair)
+                        + np.count_nonzero(verticalPair))
+
+    if pairCount == 0:
+        return False
+
+    jumpCount = int(np.count_nonzero(horizontalJump) + np.count_nonzero(verticalJump))
+    return jumpCount / pairCount > fraction
+
+
+def legendre_background(phase, mask=None, manual=False, num_zones=2,
                         limit=64, order_max=5, NoPistonCompensation=True,
                         UsePCA=False, zones=None, show_reconstruction=None):
-    """Calculate Legendre coefficients for background analysis."""
+    """Legendre coefficients of the background: inside the mask, or per zone."""
     if manual:
-        # The caller selects the zones and passes them in; this function
-        # does not open dialogs. That is what keeps this module free of wx.
-        
+        # The caller selects the zones: no dialog here, so no wx in this layer.
         if not zones:
             return np.full(order_max, np.nan), []
 
-        zone_stats = []
-        all_coefficients = []
-        
-        for i, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
-            zone_field = complex_field[ymin:ymax, xmin:xmax]
-            coeffs = _process_legendre_zone(zone_field, limit, order_max, UsePCA)
-            all_coefficients.append(coeffs)
-            zone_stats.append({'zone': i, 'legendre': coeffs, 'coords': (xmin, xmax, ymin, ymax)})
+        zoneStats = []
+        zoneCoefficients = []
 
-        mean_coeffs = np.mean(all_coefficients, axis=0)
-        return mean_coeffs, zone_stats
+        for zoneNumber, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
+            zoneField = phase[ymin:ymax, xmin:xmax]
+            # A zone with wrapping in it cannot be fitted: it poisons the mean too.
+            if _looks_wrapped(zoneField):
+                coefficients = np.full(order_max, np.nan)
+            else:
+                coefficients = _process_legendre_zone(zoneField, limit, order_max,
+                                                      UsePCA)
+            zoneCoefficients.append(coefficients)
+            zoneStats.append({'zone': zoneNumber, 'legendre': coefficients,
+                              'coords': (xmin, xmax, ymin, ymax)})
 
-    coeffs = _process_legendre_zone(complex_field, limit, order_max, UsePCA)
+        return np.mean(zoneCoefficients, axis=0), zoneStats
+
+    # The low pass averages across a 2*pi cliff, so a wrapped map has no fit.
+    if _looks_wrapped(phase, mask):
+        return np.full(order_max, np.nan)
+
+    coefficients = _process_legendre_zone(phase, limit, order_max,
+                                          UsePCA, mask)
 
     if not NoPistonCompensation:
-        coeffs = _optimize_piston(complex_field, coeffs, limit, order_max, UsePCA)
-    
-    gridSize = complex_field.shape[0]
-    coords = np.linspace(-1, 1 - 2 / gridSize, gridSize)
-    X_recon, Y_recon = np.meshgrid(coords, coords)
-    orders = np.arange(1, len(coeffs) + 1)
+        coefficients = _optimize_piston(phase, coefficients, limit,
+                                        order_max, UsePCA, mask)
 
-    # The caller decides whether the reconstruction is displayed, and with
-    # what. This module does not import a viewer.
+    gridSize = phase.shape[0]
+    gridCoords = np.linspace(-1, 1 - 2 / gridSize, gridSize)
+    gridX, gridY = np.meshgrid(gridCoords, gridCoords)
+    orders = np.arange(1, len(coefficients) + 1)
+
+    # The caller decides how to display it: this module imports no viewer.
     if show_reconstruction is not None:
         show_reconstruction(
-            reconstruction_background(coeffs, X_recon, Y_recon, orders), coeffs
+            reconstruction_background(coefficients, gridX, gridY, orders),
+            coefficients
         )
 
-    return coeffs
+    return coefficients
 
 
-def _process_legendre_zone(zone_field, limit, order_max, UsePCA):
-    """Process single zone for Legendre coefficient extraction."""
-    fftField = fftshift(fft2(ifftshift(zone_field)))
-    A, B = fftField.shape
-    center_A, center_B = int(round(A / 2)), int(round(B / 2))
-    
-    fftField = fftField[center_A - limit:center_A + limit, center_B - limit:center_B + limit]
-    square = ifftshift(ifft2(fftshift(fftField)))
+def _mask_on_grid(mask, grid_size):
+    """The background mask sampled onto the coarse grid the low-pass step leaves."""
+    # Nearest neighbour at each block centre: no interpolation, so it stays boolean.
+    rowIndex = np.minimum(((np.arange(grid_size) + 0.5) * mask.shape[0]
+                           / grid_size).astype(int), mask.shape[0] - 1)
+    colIndex = np.minimum(((np.arange(grid_size) + 0.5) * mask.shape[1]
+                           / grid_size).astype(int), mask.shape[1] - 1)
+    return mask[np.ix_(rowIndex, colIndex)]
+
+
+def _low_pass_phase(phase, limit):
+    """The smooth part of a phase map: its spectrum cropped around zero frequency."""
+    spectrum = fftshift(fft2(ifftshift(phase)))
+    fftRows, fftCols = spectrum.shape
+    centreRow, centreCol = int(round(fftRows / 2)), int(round(fftCols / 2))
+
+    spectrum = spectrum[centreRow - limit:centreRow + limit,
+                        centreCol - limit:centreCol + limit]
+    # ifft2 normalises by the CROPPED size, so the crop scales the phase up.
+    cropScale = (spectrum.shape[0] / fftRows) * (spectrum.shape[1] / fftCols)
+    return ifftshift(ifft2(fftshift(spectrum))).real * cropScale
+
+
+def _process_legendre_zone(zone_phase, limit, order_max, UsePCA, mask=None):
+    """Project one zone of the phase map onto the normalised Legendre basis."""
+    # In phase throughout: the app converts to phase on load and never wraps.
+    smoothPhase = _low_pass_phase(zone_phase, limit)
 
     if UsePCA:
-        u, s, vt = svds(square, k=1, which='LM')
-        dominant = u[:, :1] @ np.diag(s[:1]) @ vt[:1, :]
-        dominant = unwrap_phase(np.angle(dominant))
-    else:
-        dominant = unwrap_phase(np.angle(square))
+        leftVectors, singularValues, rightVectors = svds(smoothPhase, k=1, which='LM')
+        smoothPhase = (leftVectors[:, :1] @ np.diag(singularValues[:1])
+                       @ rightVectors[:1, :])
 
-    gridSize = dominant.shape[0]
-    coords = np.linspace(-1, 1 - 2 / gridSize, gridSize)
-    X, Y = np.meshgrid(coords, coords)
-    dA = (2 / gridSize) ** 2
-    order = np.arange(1, order_max + 1)
+    gridSize = smoothPhase.shape[0]
+    gridCoords = np.linspace(-1, 1 - 2 / gridSize, gridSize)
+    gridX, gridY = np.meshgrid(gridCoords, gridCoords)
+    cellArea = (2 / gridSize) ** 2
+    orders = np.arange(1, order_max + 1)
 
-    polynomials = square_legendre_fitting(order, X, Y)
-    ny, nx, n_terms = polynomials.shape
-    Legendres = polynomials.reshape(ny * nx, n_terms)
+    polynomials = square_legendre_fitting(orders, gridX, gridY)
+    rowCount, colCount, termCount = polynomials.shape
+    basis = polynomials.reshape(rowCount * colCount, termCount)
 
-    zProds = Legendres.T @ Legendres * dA
-    Legendres = Legendres / np.sqrt(np.diag(zProds))
-    phaseVector = dominant.reshape(-1, 1)
-    
-    # Projection onto Legendre basis
-    Legendre_Coefficients = np.sum(Legendres * phaseVector, axis=0) * dA
-    
-    return Legendre_Coefficients
+    # Normalise the basis so each term has unit norm over the grid.
+    innerProducts = basis.T @ basis * cellArea
+    basis = basis / np.sqrt(np.diag(innerProducts))
+    phaseVector = smoothPhase.reshape(-1, 1)
+
+    if mask is None:
+        # Orthonormal over the whole grid, so the projection already is the fit.
+        return np.sum(basis * phaseVector, axis=0) * cellArea
+
+    # Over a subset the basis loses its orthonormality: project and you get noise.
+    backgroundPixels = _mask_on_grid(mask, gridSize).reshape(-1)
+    if int(np.count_nonzero(backgroundPixels)) < termCount:
+        return np.full(termCount, np.nan)
+    coefficients, *_ = np.linalg.lstsq(basis[backgroundPixels],
+                                       phaseVector[backgroundPixels], rcond=None)
+    return coefficients.ravel()
 
 
-def _optimize_piston(complex_field, coeffs, limit, order_max, UsePCA):
-    """Optimize piston coefficient by searching for minimum variance."""
-    fftField = fftshift(fft2(ifftshift(complex_field)))
-    A, B = fftField.shape
-    center_A, center_B = int(round(A / 2)), int(round(B / 2))
-    
-    fftField = fftField[center_A - limit:center_A + limit, center_B - limit:center_B + limit]
-    square = ifftshift(ifft2(fftshift(fftField)))
+def _optimize_piston(phase, coeffs, limit, order_max, UsePCA, mask=None):
+    """Pick the piston coefficient that leaves the least residual variance."""
+    smoothPhase = _low_pass_phase(phase, limit)
 
-    gridSize = square.shape[0]
-    coords = np.linspace(-1, 1 - 2 / gridSize, gridSize)
-    X, Y = np.meshgrid(coords, coords)
-    dA = (2 / gridSize) ** 2
-    order = np.arange(1, order_max + 1)
+    gridSize = smoothPhase.shape[0]
+    gridCoords = np.linspace(-1, 1 - 2 / gridSize, gridSize)
+    gridX, gridY = np.meshgrid(gridCoords, gridCoords)
+    cellArea = (2 / gridSize) ** 2
+    orders = np.arange(1, order_max + 1)
 
-    polynomials = square_legendre_fitting(order, X, Y)
-    ny, nx, n_terms = polynomials.shape
-    Legendres = polynomials.reshape(ny * nx, n_terms)
+    polynomials = square_legendre_fitting(orders, gridX, gridY)
+    rowCount, colCount, termCount = polynomials.shape
+    basis = polynomials.reshape(rowCount * colCount, termCount)
 
-    zProds = Legendres.T @ Legendres * dA
-    Legendres = Legendres / np.sqrt(np.diag(zProds))
-    Legendres_norm_const = np.sum(Legendres ** 2, axis=0) * dA
+    innerProducts = basis.T @ basis * cellArea
+    basis = basis / np.sqrt(np.diag(innerProducts))
+    basisNorms = np.sum(basis ** 2, axis=0) * cellArea
 
-    # Search for the optimal piston value
-    values = np.arange(-np.pi, np.pi + np.pi / 6, np.pi / 6)
-    variances = []
+    # The residual is judged where the background is, like the fit itself.
+    backgroundPixels = None if mask is None else _mask_on_grid(mask, gridSize)
 
-    for val in values:
-        temp_coeffs = coeffs.copy()
-        temp_coeffs[0] = val
-        coeffs_norm = temp_coeffs / np.sqrt(Legendres_norm_const)
-        wavefront = np.sum((coeffs_norm[:, np.newaxis]) * Legendres.T, axis=0)
-        temp_holo = np.exp(1j * np.angle(square)) / np.exp(1j * wavefront.reshape(ny, nx))
-        variances.append(np.var(np.angle(temp_holo)))
+    # Sweep the piston over a full turn in steps of pi/6.
+    candidatePistons = np.arange(-np.pi, np.pi + np.pi / 6, np.pi / 6)
+    residualVariances = []
 
-    # Update piston coefficient with best value
-    best = values[np.argmin(variances)]
-    coeffs[0] = best
-    
+    for piston in candidatePistons:
+        trialCoeffs = coeffs.copy()
+        trialCoeffs[0] = piston
+        normalisedCoeffs = trialCoeffs / np.sqrt(basisNorms)
+        wavefront = np.sum((normalisedCoeffs[:, np.newaxis]) * basis.T, axis=0)
+        # Plain subtraction: both sides are phase, so there is nothing to unwrap.
+        residualPhase = smoothPhase - wavefront.reshape(rowCount, colCount)
+        residualVariances.append(np.var(residualPhase if backgroundPixels is None
+                                        else residualPhase[backgroundPixels]))
+
+    coeffs[0] = candidatePistons[np.argmin(residualVariances)]
     return coeffs
 
 
 def square_legendre_fitting(order, X, Y):
-    """Generate Legendre polynomials for fitting."""
+    """Legendre polynomials 1 to 15 over a square grid, stacked on the last axis."""
     polynomials = []
-    for i in order:
-        if i == 1:
+    for termOrder in order:
+        if termOrder == 1:
             polynomials.append(np.ones_like(X))
-        elif i == 2:
+        elif termOrder == 2:
             polynomials.append(X)
-        elif i == 3:
+        elif termOrder == 3:
             polynomials.append(Y)
-        elif i == 4:
+        elif termOrder == 4:
             polynomials.append((3 * X**2 - 1) / 2)
-        elif i == 5:
+        elif termOrder == 5:
             polynomials.append(X * Y)
-        elif i == 6:
+        elif termOrder == 6:
             polynomials.append((3 * Y**2 - 1) / 2)
-        elif i == 7:
+        elif termOrder == 7:
             polynomials.append((X * (5 * X**2 - 3)) / 2)
-        elif i == 8:
+        elif termOrder == 8:
             polynomials.append((Y * (3 * X**2 - 1)) / 2)
-        elif i == 9:
+        elif termOrder == 9:
             polynomials.append((X * (3 * Y**2 - 1)) / 2)
-        elif i == 10:
+        elif termOrder == 10:
             polynomials.append((Y * (5 * Y**2 - 3)) / 2)
-        elif i == 11:
+        elif termOrder == 11:
             polynomials.append((35 * X**4 - 30 * X**2 + 3) / 8)
-        elif i == 12:
+        elif termOrder == 12:
             polynomials.append((X * Y * (5 * X**2 - 3)) / 2)
-        elif i == 13:
+        elif termOrder == 13:
             polynomials.append(((3 * Y**2 - 1) * (3 * X**2 - 1)) / 4)
-        elif i == 14:
+        elif termOrder == 14:
             polynomials.append((X * Y * (5 * Y**2 - 3)) / 2)
-        elif i == 15:
+        elif termOrder == 15:
             polynomials.append((35 * Y**4 - 30 * Y**2 + 3) / 8)
     return np.stack(polynomials, axis=-1)
 
 
 def reconstruction_background(coefficients, X, Y, orders):
-    """
-    Rebuild the background surface from its Legendre coefficients.
-
-    Pure computation. Displaying the result is ui/legendre_viewer.py's job;
-    this function used to do both and discard what it returned.
-    """
+    """Rebuild the background surface from its Legendre coefficients."""
+    # Pure computation: displaying the result is ui/legendre_viewer.py's job.
     polynomials = square_legendre_fitting(orders, X, Y)
-    ny, nx, n_terms = polynomials.shape
-    coeffs_used = coefficients[:n_terms]
+    rowCount, colCount, termCount = polynomials.shape
+    usedCoefficients = coefficients[:termCount]
 
-    superficie = np.zeros((ny, nx))
-    for i, coeff in enumerate(coeffs_used):
-        superficie += coeff * polynomials[:, :, i]
+    surface = np.zeros((rowCount, colCount))
+    for termIndex, coefficient in enumerate(usedCoefficients):
+        surface += coefficient * polynomials[:, :, termIndex]
 
-    return superficie
-
-
+    return surface

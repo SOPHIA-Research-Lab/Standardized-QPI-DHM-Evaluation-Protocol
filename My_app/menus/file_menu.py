@@ -1,23 +1,21 @@
 import wx
 
-def create(parent_frame, notebook):
-    file_menu = wx.Menu()
-    file_menu.Append(wx.ID_OPEN, "&Open\tCtrl+O", "Open Image")
-    # Ctrl+S saves the RESULTS, not the image on screen: on_save exports the
-    # metric and mask tables. The label used to say 'Save Current Image'.
-    file_menu.Append(wx.ID_SAVE, "&Save Results\tCtrl+S", "Export the metric and mask tables to an Excel file")
-    file_menu.AppendSeparator()
+def create(parent_frame):
+    fileMenu = wx.Menu()
+    fileMenu.Append(wx.ID_OPEN, "&Open\tCtrl+O", "Open Image")
+    # Ctrl+S saves the RESULTS, not the image on screen.
+    fileMenu.Append(wx.ID_SAVE, "&Save Results\tCtrl+S", "Export the metric and mask tables to an Excel file")
+    fileMenu.AppendSeparator()
 
-    # Nueva opción "Clear"
-    clear_id = wx.NewIdRef()
-    file_menu.Append(clear_id, "&Clear\tCtrl+L", "Close all images and metric table")
-    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_clear, id=clear_id)
+    clearId = wx.NewIdRef()
+    fileMenu.Append(clearId, "&Clear\tCtrl+L", "Close all images and metric table")
+    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_clear, id=clearId)
 
-    file_menu.AppendSeparator()
-    file_menu.Append(wx.ID_CLOSE_ALL, "&Exit\tCtrl+Q", "Exit Application")
+    fileMenu.AppendSeparator()
+    fileMenu.Append(wx.ID_CLOSE_ALL, "&Exit\tCtrl+Q", "Exit Application")
 
     parent_frame.Bind(wx.EVT_MENU, parent_frame.on_open, id=wx.ID_OPEN)
     parent_frame.Bind(wx.EVT_MENU, parent_frame.on_save, id=wx.ID_SAVE)
     parent_frame.Bind(wx.EVT_MENU, parent_frame.on_exit, id=wx.ID_CLOSE_ALL)
 
-    return file_menu
+    return fileMenu

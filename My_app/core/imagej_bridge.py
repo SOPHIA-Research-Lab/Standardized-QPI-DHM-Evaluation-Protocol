@@ -1,8 +1,34 @@
 import io
 import json
 import os
+import sys
 import numpy as np
 from PIL import Image
+
+
+def _ensure_java_home():
+    """Point JPype at the JVM shipped inside this Python environment.
+
+    conda installs one under <env>/Library/lib/jvm on Windows, but JPype only
+    consults JAVA_HOME and the registry. Without this the bridge fails with
+    "No JVM shared library file (jvm.dll) found" on a machine that has a
+    perfectly good JVM sitting beside the interpreter."""
+    if os.environ.get("JAVA_HOME"):
+        return
+    candidates = (
+        os.path.join(sys.prefix, "Library", "lib", "jvm"),   # conda, Windows
+        os.path.join(sys.prefix, "lib", "jvm"),              # conda, POSIX
+    )
+    for candidate in candidates:
+        if (os.path.isfile(os.path.join(candidate, "bin", "server", "jvm.dll"))
+                or os.path.isfile(os.path.join(candidate, "lib", "server",
+                                               "libjvm.so"))):
+            os.environ["JAVA_HOME"] = candidate
+            return
+
+
+_ensure_java_home()
+
 import scyjava
 from scyjava import jimport
 import jpype
@@ -38,11 +64,11 @@ def _load_saved_path():
     """Loads a previously saved Fiji path from the config file."""
     if os.path.exists(CONFIG_FILE):
         try:
-            with open(CONFIG_FILE, "r") as f:
-                data = json.load(f)
-                path = data.get("fiji_path")
-                if path and _is_valid_fiji_folder(path):
-                    return path
+            with open(CONFIG_FILE, "r") as configFile:
+                savedData = json.load(configFile)
+                fijiPath = savedData.get("fiji_path")
+                if fijiPath and _is_valid_fiji_folder(fijiPath):
+                    return fijiPath
         except Exception:
             pass
     return None
@@ -51,43 +77,42 @@ def _load_saved_path():
 def _save_path(path):
     """Saves the Fiji path for future runs."""
     try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump({"fiji_path": path}, f)
+        with open(CONFIG_FILE, "w") as configFile:
+            json.dump({"fiji_path": path}, configFile)
     except Exception:
         pass
 
 
 def _autodetect_fiji():
     """Tries common installation locations."""
-    for path in COMMON_LOCATIONS:
-        if _is_valid_fiji_folder(path):
-            return path
+    for fijiPath in COMMON_LOCATIONS:
+        if _is_valid_fiji_folder(fijiPath):
+            return fijiPath
     return None
 
 
 def get_fiji_path(parent_window=None):
     """Gets the Fiji installation path: saved config -> autodetect -> ask user."""
-    path = _load_saved_path()
-    if path:
-        return path
+    fijiPath = _load_saved_path()
+    if fijiPath:
+        return fijiPath
 
-    path = _autodetect_fiji()
-    if path:
-        _save_path(path)
-        return path
+    fijiPath = _autodetect_fiji()
+    if fijiPath:
+        _save_path(fijiPath)
+        return fijiPath
 
-    # Not found automatically: ask the user
     import wx
     with wx.DirDialog(
         parent_window,
         "Select your Fiji installation folder (the one containing 'jars' and 'plugins')",
         style=wx.DD_DEFAULT_STYLE | wx.DD_DIR_MUST_EXIST
-    ) as dlg:
-        if dlg.ShowModal() == wx.ID_OK:
-            path = dlg.GetPath()
-            if _is_valid_fiji_folder(path):
-                _save_path(path)
-                return path
+    ) as dialog:
+        if dialog.ShowModal() == wx.ID_OK:
+            fijiPath = dialog.GetPath()
+            if _is_valid_fiji_folder(fijiPath):
+                _save_path(fijiPath)
+                return fijiPath
             else:
                 wx.MessageBox(
                     "The selected folder doesn't look like a valid Fiji installation "
@@ -105,14 +130,14 @@ def _ensure_imagej_started(parent_window=None):
     if _ij_initialized:
         return
 
-    fiji_path = get_fiji_path(parent_window)
-    if fiji_path is None:
+    fijiPath = get_fiji_path(parent_window)
+    if fijiPath is None:
         raise RuntimeError("Fiji installation path was not provided.")
 
 
     scyjava.config.set_manage_deps(False)
-    scyjava.config.add_classpath(os.path.join(fiji_path, "jars", "*"))
-    scyjava.config.add_classpath(os.path.join(fiji_path, "plugins", "*"))
+    scyjava.config.add_classpath(os.path.join(fijiPath, "jars", "*"))
+    scyjava.config.add_classpath(os.path.join(fijiPath, "plugins", "*"))
 
 
     IJ = jimport('ij.IJ')
@@ -123,13 +148,32 @@ def _ensure_imagej_started(parent_window=None):
 
 
 def _close_all_imagej_images():
-    for image_id in list(WindowManager.getIDList() or []):
-        imp = WindowManager.getImage(image_id)
-        if imp is not None:
-            imp.changes = False  # prevent a blocking "save changes?" dialog
-            imp.close()
+    for imageId in list(WindowManager.getIDList() or []):
+        imagePlus = WindowManager.getImage(imageId)
+        if imagePlus is not None:
+            imagePlus.changes = False  # prevent a blocking "save changes?" dialog
+            imagePlus.close()
     _active_images.clear()
     _last_hash.clear()
+
+
+def _bring_to_front(window):
+    """Raise a Java window above the application that launched it.
+
+    toFront() on its own is usually ignored on Windows, which does not let a
+    window steal the foreground from the one that has it; flicking
+    always-on-top is what actually raises it."""
+    if window is None:
+        return
+    try:
+        window.setVisible(True)
+        window.setAlwaysOnTop(True)
+        window.toFront()
+        window.requestFocus()
+        window.setAlwaysOnTop(False)
+    except Exception:
+        # Raising is a courtesy: never let it cost the image itself.
+        pass
 
 
 def show_imagej_gui(parent_window=None):
@@ -140,6 +184,7 @@ def show_imagej_gui(parent_window=None):
     if _ij_frame is not None:
         if not _ij_frame.isVisible():
             _ij_frame.setVisible(True)
+        _bring_to_front(_ij_frame)
         return
 
     ImageJMain = jimport('ij.ImageJ')
@@ -180,6 +225,7 @@ def show_imagej_gui(parent_window=None):
             pass
 
     _ij_frame.addWindowListener(SafeCloseListener())
+    _bring_to_front(_ij_frame)
 
 
 def pil_to_imageplus(pil_img: Image.Image, title="FromApp", parent_window=None):
@@ -187,29 +233,32 @@ def pil_to_imageplus(pil_img: Image.Image, title="FromApp", parent_window=None):
     _ensure_imagej_started(parent_window)
 
 
-    array = np.array(pil_img.convert("L"), dtype=np.uint8)
-    height, width = array.shape
+    pixelArray = np.array(pil_img.convert("L"), dtype=np.uint8)
+    height, width = pixelArray.shape
 
-    flat = array.flatten().astype(np.int8)
-    java_byte_array = jpype.JArray(jpype.JByte)(flat.tolist())
+    flatPixels = pixelArray.flatten().astype(np.int8)
+    javaByteArray = jpype.JArray(jpype.JByte)(flatPixels.tolist())
 
-    existing = _active_images.get(title)
-    if existing is not None and WindowManager.getImage(existing.getID()) is not None:
-        existing.getProcessor().setPixels(java_byte_array)
-        existing.updateAndDraw()
-        existing.getWindow().toFront()
-        return existing
+    existingImage = _active_images.get(title)
+    if existingImage is not None and WindowManager.getImage(existingImage.getID()) is not None:
+        existingImage.getProcessor().setPixels(javaByteArray)
+        existingImage.updateAndDraw()
+        _bring_to_front(existingImage.getWindow())
+        return existingImage
 
     ByteProcessor = jimport('ij.process.ByteProcessor')
     processor = ByteProcessor(width, height)
-    processor.setPixels(java_byte_array)
+    processor.setPixels(javaByteArray)
 
-    imp = ImagePlus(title, processor)
-    imp.show()
+    imagePlus = ImagePlus(title, processor)
+    imagePlus.show()
+    # A window that has just been created is not raised either: show() leaves
+    # it wherever the window manager put it, which is behind this application.
+    _bring_to_front(imagePlus.getWindow())
 
-    _active_images[title] = imp
+    _active_images[title] = imagePlus
     _last_hash[title] = None
-    return imp
+    return imagePlus
 
 
 def _imageplus_to_pil(imp):
@@ -218,14 +267,14 @@ def _imageplus_to_pil(imp):
     ImageIO = jimport('javax.imageio.ImageIO')
     ByteArrayOutputStream = jimport('java.io.ByteArrayOutputStream')
 
-    flattened_image = imp.flatten()
-    buffered_image = flattened_image.getBufferedImage()
+    flattenedImage = imp.flatten()
+    bufferedImage = flattenedImage.getBufferedImage()
 
-    baos = ByteArrayOutputStream()
-    ImageIO.write(buffered_image, "png", baos)
-    png_bytes = bytes(baos.toByteArray())
+    outputStream = ByteArrayOutputStream()
+    ImageIO.write(bufferedImage, "png", outputStream)
+    pngBytes = bytes(outputStream.toByteArray())
 
-    return Image.open(io.BytesIO(png_bytes)).convert("RGB")
+    return Image.open(io.BytesIO(pngBytes)).convert("RGB")
 
 
 def check_for_imagej_updates():
@@ -234,25 +283,25 @@ def check_for_imagej_updates():
         return []
 
     changes = []
-    titles_to_remove = []
+    titlesToRemove = []
 
-    for title, imp in _active_images.items():
-        if WindowManager.getImage(imp.getID()) is None:
-            titles_to_remove.append(title)
+    for title, imagePlus in _active_images.items():
+        if WindowManager.getImage(imagePlus.getID()) is None:
+            titlesToRemove.append(title)
             continue
 
         try:
-            pil_img = _imageplus_to_pil(imp)
-            current_hash = hash(pil_img.tobytes())
+            pilImage = _imageplus_to_pil(imagePlus)
+            currentHash = hash(pilImage.tobytes())
 
-            if _last_hash.get(title) != current_hash:
-                _last_hash[title] = current_hash
-                changes.append((title, pil_img))
-        except Exception as e:
-            print(f"Error checking '{title}': {e}")
+            if _last_hash.get(title) != currentHash:
+                _last_hash[title] = currentHash
+                changes.append((title, pilImage))
+        except Exception as error:
+            print(f"Error checking '{title}': {error}")
             continue
 
-    for title in titles_to_remove:
+    for title in titlesToRemove:
         del _active_images[title]
         _last_hash.pop(title, None)
 
