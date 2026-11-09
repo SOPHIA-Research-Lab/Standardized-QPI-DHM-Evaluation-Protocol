@@ -3,6 +3,10 @@ from scipy.ndimage import laplace, convolve
 from skimage.restoration import unwrap_phase
 from skimage.filters import threshold_local
 
+# Which side of a threshold holds the sample is the same question Module I
+# answers for the background mask, so the same rule is used here.
+from analysis.module1.segmentation import bright_sample
+
 
 def phase_gradient_prewitt(phase: np.ndarray, use_unwrap: bool = False):
     """Global Phase Gradient: mean local gradient magnitude, from Prewitt kernels."""
@@ -215,7 +219,15 @@ def histogram_valley(phi_nor, bins=256, smooth=5):
 
 def tsm_global(phase: np.ndarray, use_unwrap: bool = False, use_adaptive: bool = True,
                threshold: float = None):
-    """Percentage of dark pixels after binarising the normalised phase."""
+    """Percentage of SAMPLE pixels after binarising the normalised phase.
+
+    Which side of the threshold the sample lies on is read from the skew of the
+    histogram, as the background mask of Module I does. Counting the dark side
+    unconditionally reported the background instead: a bright sample pins the
+    maximum of the normalisation, the background settles near zero, and every
+    threshold above its own noise left the whole background in the dark class,
+    so the metric returned 100 % minus the sample area for the usual polarity
+    and the sample area for the other one."""
     phase = np.asarray(phase, dtype=np.float64)
     if phase.ndim != 2:
         raise ValueError("Phase image must be 2D.")
@@ -240,8 +252,8 @@ def tsm_global(phase: np.ndarray, use_unwrap: bool = False, use_adaptive: bool =
         binarised = phase > np.mean(phase)
 
     rowCount, colCount = phase.shape
-    darkPixels = np.sum(~binarised)
-    return (darkPixels / (rowCount * colCount)) * 100.0
+    samplePixels = np.sum(binarised if bright_sample(phase) else ~binarised)
+    return (samplePixels / (rowCount * colCount)) * 100.0
 
 
 def sharpness_global(phase: np.ndarray, use_unwrap: bool = False, beta: float = 2.0):
