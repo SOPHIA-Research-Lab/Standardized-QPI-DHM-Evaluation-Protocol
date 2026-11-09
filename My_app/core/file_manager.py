@@ -5,9 +5,9 @@ import os
 from scipy.io import loadmat
 from analysis.module1 import utilitiesRBPV as utRBPV
 
+
 def open_image(parent, notebook):
-    """Open image or .mat file, convert to phase if needed, and display in a new notebook tab."""
-    
+    """Open images or .mat files and show each one in a new notebook tab."""
     wildcard = (
         "Supported files (*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.mat)|"
         "*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.mat|"
@@ -19,99 +19,126 @@ def open_image(parent, notebook):
     with wx.FileDialog(parent, "Open Image or .mat File",
                        wildcard=wildcard,
                        style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST | wx.FD_MULTIPLE) as fileDialog:
-        
+
         if fileDialog.ShowModal() == wx.ID_CANCEL:
             return
 
-        paths = fileDialog.GetPaths()
-
-        for path in paths:
-            ext = os.path.splitext(path)[1].lower()
+        for path in fileDialog.GetPaths():
+            extension = os.path.splitext(path)[1].lower()
 
             try:
-                # -------------------------------------------------------
-                # CASE 1: Standard image (PNG, JPG, BMP, TIFF, etc.)
-                # -------------------------------------------------------
-                if ext in [".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"]:
-                    img = Image.open(path).convert("L")
-                    img_array = np.array(img, dtype=float)
+                if extension in [".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"]:
+                    # 8-bit: 256 phase levels, remapped linearly onto [-pi, pi].
+                    grayscale = Image.open(path).convert("L")
+                    grayLevels = np.array(grayscale, dtype=float)
+                    phase = utRBPV.gray_to_phase(grayLevels)
 
-                    # Convert grayscale → phase [-π, π]
-                    phase = utRBPV.grayscaleToPhase(img_array)
-
-                    amp_img = Image.fromarray(img_array.astype(np.uint8), mode="L")
-
-                    page = notebook.add_image_tab(amp_img, os.path.basename(path))
+                    displayImage = Image.fromarray(grayLevels.astype(np.uint8), mode="L")
+                    page = notebook.add_image_tab(displayImage, os.path.basename(path))
                     page.phase = phase
                     page.is_mat_complex = False
 
-                # -------------------------------------------------------
-                # CASE 2: MATLAB .mat file - user selects variable
-                # -------------------------------------------------------
-                elif ext == ".mat":
-                    mat_data = loadmat(path)
-                    data_keys = [k for k in mat_data.keys() if not k.startswith('__')]
-                    dlg = wx.SingleChoiceDialog(parent,
-                                                "Select the variable to open:",
-                                                "File .MAT",
-                                                data_keys)
-                    if dlg.ShowModal() == wx.ID_OK:
-                        complex_key = dlg.GetStringSelection()
-                        complex_field = mat_data[complex_key]
+                elif extension == ".mat":
+                    matData = loadmat(path)
+                    fieldNames = [matKey for matKey in matData.keys() if not matKey.startswith('__')]
+                    dialog = wx.SingleChoiceDialog(parent,
+                                                   "Select the variable to open:",
+                                                   "File .MAT",
+                                                   fieldNames)
+                    if dialog.ShowModal() == wx.ID_OK:
+                        fieldName = dialog.GetStringSelection()
+                        variable = matData[fieldName]
 
-                        if not isinstance(complex_field, np.ndarray):
-                            raise TypeError(f"The variable '{complex_key}' is not a valid array.")
+                        if not isinstance(variable, np.ndarray):
+                            raise TypeError(f"The variable '{fieldName}' is not a valid array.")
 
-                        # Process the complex field as before
-                        process_complex_field(notebook, complex_field, os.path.basename(path), complex_key)
+                        # A real variable is already the phase, in radians. It
+                        # must not go through np.angle, which would collapse it
+                        # onto 0 and pi according to its sign alone.
+                        if np.iscomplexobj(variable):
+                            process_complex_field(notebook, variable,
+                                                  os.path.basename(path), fieldName)
+                        else:
+                            process_phase_array(notebook, variable,
+                                                os.path.basename(path), fieldName)
 
-                    dlg.Destroy()
+                    dialog.Destroy()
 
-            except Exception as e:
-                wx.MessageBox(f"Error {os.path.basename(path)}:\n{e}", "Error", wx.ICON_ERROR)
+            except Exception as error:
+                wx.MessageBox(f"Error {os.path.basename(path)}:\n{error}", "Error", wx.ICON_ERROR)
 
 
 def process_complex_field(notebook, complex_field, filename, field_name):
-    """Process a complex field: extract amplitude and phase, display amplitude normalized for viewing."""
-    
-    # Calculate amplitude and phase
+    """Keep the true phase of a complex field and display its amplitude."""
     amplitude = np.abs(complex_field)
     phase = np.angle(complex_field)
 
-    amp_min = np.min(amplitude)
-    amp_max = np.max(amplitude)
+    amplitudeMin = np.min(amplitude)
+    amplitudeMax = np.max(amplitude)
 
-    # --------------------------------------------
-    # Normalize amplitude for correct image display
-    # --------------------------------------------
-    amplitude_norm = amplitude - amp_min
-    if amp_max > amp_min:
-        amplitude_norm = amplitude_norm / (amp_max - amp_min)
-    amplitude_norm = (amplitude_norm * 255).astype(np.uint8)
+    # The amplitude is normalised for DISPLAY only; the phase is kept as is.
+    normalisedAmplitude = amplitude - amplitudeMin
+    if amplitudeMax > amplitudeMin:
+        normalisedAmplitude = normalisedAmplitude / (amplitudeMax - amplitudeMin)
+    normalisedAmplitude = (normalisedAmplitude * 255).astype(np.uint8)
 
-    # Create PIL image from normalized amplitude
-    amp_img = Image.fromarray(amplitude_norm, mode='L')
+    displayImage = Image.fromarray(normalisedAmplitude, mode='L')
+    page = notebook.add_image_tab(displayImage, f"{filename} [{field_name}]")
 
-    # Add image to notebook
-    display_name = f"{filename} [{field_name}]"
-    page = notebook.add_image_tab(amp_img, display_name)
-
-    # Store original data for further analysis
     page.amplitude = amplitude
     page.phase = phase
     page.is_mat_complex = True
     page.complex_field_name = field_name
 
-    # Show information message
-    info_msg = (
+    wx.MessageBox(
         f"Complex field loaded successfully!\n\n"
         f"File: {filename}\n"
         f"Field: {field_name}\n"
         f"Size: {complex_field.shape}\n\n"
         f"Displaying: Amplitude (normalized for visualization)\n"
         f"Analysis will use: Original Phase data\n\n"
-        f"Amplitude range: [{amp_min:.4f}, {amp_max:.4f}]\n"
-        f"Phase range: [{np.min(phase):.4f}, {np.max(phase):.4f}] rad"
-    )
+        f"Amplitude range: [{amplitudeMin:.4f}, {amplitudeMax:.4f}]\n"
+        f"Phase range: [{np.min(phase):.4f}, {np.max(phase):.4f}] rad",
+        "Complex Field Loaded", wx.ICON_INFORMATION)
 
-    wx.MessageBox(info_msg, "Complex Field Loaded", wx.ICON_INFORMATION)
+    return page
+
+
+def process_phase_array(notebook, phase_array, filename, field_name):
+    """Open a real .mat variable, which is already the phase in radians.
+
+    Nothing is converted: the array is handed to the metrics as it stands, and
+    only the picture on screen is rescaled so that it can be displayed at all."""
+    phase = np.asarray(phase_array, dtype=float)
+
+    phaseMin = float(np.min(phase))
+    phaseMax = float(np.max(phase))
+
+    # Normalised for DISPLAY only; the phase itself is kept untouched.
+    displayLevels = phase - phaseMin
+    if phaseMax > phaseMin:
+        displayLevels = displayLevels / (phaseMax - phaseMin)
+    displayLevels = (displayLevels * 255).astype(np.uint8)
+
+    displayImage = Image.fromarray(displayLevels, mode='L')
+    page = notebook.add_image_tab(displayImage, f"{filename} [{field_name}]")
+
+    page.amplitude = None
+    page.phase = phase
+    # True means "the phase is stored on the page", not "the file held a
+    # complex field": it is what tells the caller not to re-read the pixels.
+    page.is_mat_complex = True
+    page.complex_field_name = field_name
+
+    wx.MessageBox(
+        f"Phase map loaded successfully!\n\n"
+        f"File: {filename}\n"
+        f"Variable: {field_name}\n"
+        f"Size: {phase.shape}\n\n"
+        f"The variable is real, so it is taken to be the phase in radians "
+        f"and is used as it stands.\n"
+        f"Displaying: the phase, rescaled for visualization only.\n\n"
+        f"Phase range: [{phaseMin:.4f}, {phaseMax:.4f}] rad",
+        "Phase Map Loaded", wx.ICON_INFORMATION)
+
+    return page

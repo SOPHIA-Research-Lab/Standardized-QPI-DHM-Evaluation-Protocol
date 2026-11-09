@@ -4,115 +4,69 @@ from skimage.segmentation import watershed
 import numpy as np
 
 
-# ----------------------------
-# IO / helpers
-# ----------------------------
+# The file convention for a raster phase map: an 8-bit grey level spans the
+# whole principal interval, so phase zero sits at mid grey. The endpoints are
+# named rather than inlined because they are what makes a published number
+# reproducible from the stored image.
+GRAY_MIN, GRAY_MAX = 0.0, 255.0
+PHASE_MIN, PHASE_MAX = -np.pi, np.pi
 
 
-def grayscaleToPhase(image: np.ndarray) -> np.ndarray:
-    """Convert grayscale image (0-255 or 0-1) to phase map [-π, π]."""
-    image = np.array(image)
-    img = image.astype(float)
-    if img.max() > 1.0:
-        img = img / 255.0
-    phase = img * (2 * np.pi) - np.pi
-    return phase
+def gray_to_phase(values: np.ndarray) -> np.ndarray:
+    """Map 8-bit grey levels onto the phase interval [-pi, pi], linearly.
+
+    The scale is fixed, never inferred from the data: a previous version
+    divided by 255 only when the image's maximum exceeded 1, so a nearly black
+    image was read on a different scale from every other one, and the same grey
+    level could come out as -pi or +pi depending on what else the image held.
+    Values outside the grey range saturate rather than extrapolate."""
+    values = np.clip(np.asarray(values, dtype=float), GRAY_MIN, GRAY_MAX)
+    return PHASE_MIN + (values - GRAY_MIN) * (PHASE_MAX - PHASE_MIN) / (GRAY_MAX - GRAY_MIN)
 
 
 def separate_touching_samples(binary_mask):
-    """Separate touching samples using watershed segmentation."""
-    distance = distance_transform_edt(binary_mask)
+    """Split samples that touch each other, by watershed on the distance map."""
+    distanceMap = distance_transform_edt(binary_mask)
     from scipy import ndimage
-    local_maxima = ndimage.maximum_filter(distance, size=20) == distance
-    local_maxima = local_maxima & (distance > 5)
-    markers = measure.label(local_maxima)
-    
+    localMaxima = ndimage.maximum_filter(distanceMap, size=20) == distanceMap
+    localMaxima = localMaxima & (distanceMap > 5)
+    markers = measure.label(localMaxima)
+
+    # One marker means one sample: nothing to separate.
     if np.max(markers) > 1:
-        labels = watershed(-distance, markers, mask=binary_mask)
-        separated_mask = labels > 0
-        
-        # Print component statistics like matplotlib version
-        original_components = len(measure.regionprops(measure.label(binary_mask)))
-        new_components = len(measure.regionprops(measure.label(separated_mask)))
-        
-        return separated_mask
-    else:
-        return binary_mask
+        labels = watershed(-distanceMap, markers, mask=binary_mask)
+        return labels > 0
+    return binary_mask
 
 
-# ----------------------------
-# Utilities to convert numpy -> wx.Bitmap
-# ----------------------------
 def build_background_mask(image: np.ndarray, threshold_value: float,
                           sample_is_white: bool, min_area: int = 100,
                           hole_area: int = 50):
-    """
-    Turn a chosen threshold into a background mask.
-
-    Pure computation: no dialogs, no wx. Asking the user for the threshold is
-    the UI layer's job (see ui/threshold_dialog.py); what the threshold means
-    for the mask is decided here.
-
-    Parameters
-    ----------
-    image : ndarray
-        Phase map.
-    threshold_value : float
-        Threshold on the image normalised to [0, 1].
-    sample_is_white : bool
-        True when the sample is the bright side of the threshold.
-    min_area, hole_area : int
-        Morphological cleanup sizes.
-
-    Returns
-    -------
-    tuple
-        (background_mask, threshold_value)
-    """
+    """Turn a chosen threshold into (background_mask, threshold_value)."""
+    # Pure computation: ui/threshold_dialog.py is what asks for the threshold.
     image = np.array(image, dtype=float)
 
-    
-    # Normalize image to 0-1 range
-    img_min, img_max = np.min(image), np.max(image)
-    if img_max - img_min < 1e-12:
-        img_normalized = np.zeros_like(image, dtype=float)
+    phaseMin, phaseMax = np.min(image), np.max(image)
+    if phaseMax - phaseMin < 1e-12:
+        normalisedPhase = np.zeros_like(image, dtype=float)
     else:
-        img_normalized = (image - img_min) / (img_max - img_min)
+        normalisedPhase = (image - phaseMin) / (phaseMax - phaseMin)
 
-    # Apply threshold
-    binary = (img_normalized > threshold_value).astype(np.uint8) * 255
-    preview_mask = (binary > 0)
-    sample_mask = preview_mask.copy() if sample_is_white else ~preview_mask
+    aboveThreshold = normalisedPhase > threshold_value
+    sampleMask = aboveThreshold.copy() if sample_is_white else ~aboveThreshold
 
-    # Separate touching samples
     try:
-        if np.any(sample_mask):
-            sample_mask = separate_touching_samples(sample_mask)
+        if np.any(sampleMask):
+            sampleMask = separate_touching_samples(sampleMask)
     except Exception:
         pass
 
-    # Clean up mask
+    # remove_small_objects works on the foreground, so a dark sample inverts.
     if sample_is_white:
-        cleaned = morphology.remove_small_objects(sample_mask, min_size=min_area)
+        cleanedMask = morphology.remove_small_objects(sampleMask, min_size=min_area)
     else:
-        cleaned = ~morphology.remove_small_objects(~sample_mask, min_size=min_area)
+        cleanedMask = ~morphology.remove_small_objects(~sampleMask, min_size=min_area)
 
-    final_sample_mask = morphology.remove_small_holes(cleaned, area_threshold=hole_area)
-    background_mask = ~final_sample_mask
-    
-    # Extract background values (like matplotlib version)
-    #background_values = image[background_mask]
-
-    total_pixels = image.size
-    background_pixels = int(np.sum(background_mask))
-    sample_pixels = int(np.sum(final_sample_mask))
-    
-    # print("\n✓ Mask created successfully!")
-    # print("\nMask Statistics:")
-    # print(f"Total pixels: {total_pixels}")
-    # print(f"Background pixels: {background_pixels} ({100 * background_pixels / total_pixels:.1f}%)")
-    # print(f"Sample pixels: {sample_pixels} ({100 * sample_pixels / total_pixels:.1f}%)")
-    # #print(f"Background values extracted: {len(background_values)}")
-    # print(f"Threshold value: {threshold_value:.4f}")
-
-    return background_mask, float(threshold_value)
+    finalSampleMask = morphology.remove_small_holes(cleanedMask,
+                                                    area_threshold=hole_area)
+    return ~finalSampleMask, float(threshold_value)

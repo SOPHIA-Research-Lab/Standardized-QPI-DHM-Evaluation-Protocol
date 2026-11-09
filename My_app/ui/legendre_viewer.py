@@ -1,11 +1,5 @@
-"""
-Viewer for the Legendre background reconstruction.
-
-This was the tail of reconstruction_background() in the analysis layer: the
-function reconstructed the surface AND popped up a window showing it, and the
-only caller threw the return value away. Computing and displaying are now two
-separate things, and only this half knows about wx.
-"""
+"""Viewer for the Legendre background reconstruction."""
+# Split off from the analysis layer, which used to compute AND display.
 import matplotlib
 import numpy as np
 import wx
@@ -15,162 +9,135 @@ from matplotlib.figure import Figure
 from ui import hidpi
 
 #: Same palette as the TSM histogram and the toolbar icons.
-SUPERFICIE = "#fcfcfb"
-TINTA = "#0b0b0b"
-TINTA_SUAVE = "#52514e"
-REJILLA = "#e5e4e0"
-POSITIVO = "#2a78d6"
-NEGATIVO = "#e34948"
+SURFACE = "#fcfcfb"
+INK = "#0b0b0b"
+INK_SOFT = "#52514e"
+GRID = "#e5e4e0"
+POSITIVE = "#2a78d6"
+NEGATIVE = "#e34948"
 
 
-def coefficient_figure(coefficients, escala=1.0):
-    """
-    Build the coefficient bar chart as a matplotlib figure.
+def coefficient_figure(coefficients, scaleFactor=1.0):
+    """Build the coefficient bar chart as a matplotlib figure."""
+    # Not through pyplot: its wx backend doubles the dpi on a scaled screen.
+    values = np.asarray(coefficients, dtype=float)
+    indices = np.arange(1, len(values) + 1)
 
-    Separate from the dialog so the chart can be rendered and inspected
-    without opening a window. `escala` is the screen's pixel-per-unit factor:
-    the chart measures 5 x 4 inches whatever it is, but it is drawn with that
-    many more pixels.
-
-    The figure is built directly instead of through pyplot. pyplot attaches
-    the figure to whichever interactive backend is active, and the wx backend
-    doubles the dpi behind your back on a scaled screen: a chart asked for at
-    1000x800 came back 2000x1521 and overflowed the window it had to sit in.
-    """
-    valores = np.asarray(coefficients, dtype=float)
-    indices = np.arange(1, len(valores) + 1)
-
-    fig = Figure(figsize=(5, 4), dpi=100 * escala)
+    fig = Figure(figsize=(5, 4), dpi=100 * scaleFactor)
     FigureCanvasAgg(fig)
-    fig.patch.set_facecolor(SUPERFICIE)
-    ax = fig.add_subplot(111)
-    ax.set_facecolor(SUPERFICIE)
+    fig.patch.set_facecolor(SURFACE)
+    axes = fig.add_subplot(111)
+    axes.set_facecolor(SURFACE)
 
-    # The sign of a coefficient is part of the reading, so the two poles of a
-    # diverging pair carry it and the zero line stays visible. The bars wear a
-    # surface-coloured edge, which is what keeps adjacent ones from touching.
-    colores = [POSITIVO if v >= 0 else NEGATIVO for v in valores]
-    ax.bar(indices, valores, width=0.68, color=colores,
-           edgecolor=SUPERFICIE, linewidth=2)
-    ax.axhline(0, color=TINTA_SUAVE, linewidth=1.0)
+    # The sign is part of the reading, so the two poles of a pair carry it.
+    barColours = [POSITIVE if coefficient >= 0 else NEGATIVE for coefficient in values]
+    axes.bar(indices, values, width=0.68, color=barColours,
+             edgecolor=SURFACE, linewidth=2)
+    axes.axhline(0, color=INK_SOFT, linewidth=1.0)
 
-    # Few bars, and reading the exact number is the reason this panel exists,
-    # so every bar is labelled. Labels wear text ink, never the bar colour.
-    for x, v in zip(indices, valores):
-        ax.annotate("%.4f" % v, (x, v),
-                    xytext=(0, 4 if v >= 0 else -4), textcoords="offset points",
-                    ha="center", va="bottom" if v >= 0 else "top",
-                    fontsize=8, color=TINTA)
+    # Every bar is labelled: the exact number is why this panel exists.
+    for index, value in zip(indices, values):
+        axes.annotate("%.4f" % value, (index, value),
+                      xytext=(0, 4 if value >= 0 else -4),
+                      textcoords="offset points", ha="center",
+                      va="bottom" if value >= 0 else "top",
+                      fontsize=8, color=INK)
 
-    ax.set_xticks(indices)
-    ax.set_xlabel("Legendre index", color=TINTA_SUAVE)
-    ax.set_ylabel("Coefficient value [rad]", color=TINTA_SUAVE)
-    ax.tick_params(colors=TINTA_SUAVE, labelsize=9, length=0)
-    ax.grid(True, axis="y", color=REJILLA, linewidth=1.0)
-    ax.set_axisbelow(True)
-    for lado in ("top", "right", "left"):
-        ax.spines[lado].set_visible(False)
-    ax.spines["bottom"].set_color(REJILLA)
-    ax.margins(y=0.18)
+    axes.set_xticks(indices)
+    axes.set_xlabel("Legendre index", color=INK_SOFT)
+    axes.set_ylabel("Coefficient value [rad]", color=INK_SOFT)
+    axes.tick_params(colors=INK_SOFT, labelsize=9, length=0)
+    axes.grid(True, axis="y", color=GRID, linewidth=1.0)
+    axes.set_axisbelow(True)
+    for side in ("top", "right", "left"):
+        axes.spines[side].set_visible(False)
+    axes.spines["bottom"].set_color(GRID)
+    axes.margins(y=0.18)
     fig.tight_layout()
     return fig
 
 
-def surface_image(superficie):
+def surface_image(surface):
     """The reconstructed surface as a wx.Image, in viridis."""
-    mapa = matplotlib.colormaps['viridis']
-    rango = float(superficie.max() - superficie.min())
-    norm = (superficie - superficie.min()) / (rango if rango > 1e-12 else 1.0)
-    rgb = (mapa(norm)[:, :, :3] * 255).astype(np.uint8)
+    colourMap = matplotlib.colormaps['viridis']
+    surfaceRange = float(surface.max() - surface.min())
+    normalised = ((surface - surface.min())
+                  / (surfaceRange if surfaceRange > 1e-12 else 1.0))
+    rgbPixels = (colourMap(normalised)[:, :, :3] * 255).astype(np.uint8)
 
-    alto, ancho = rgb.shape[:2]
-    imagen = wx.Image(ancho, alto)
-    imagen.SetData(rgb.tobytes())
-    return imagen
+    height, width = rgbPixels.shape[:2]
+    image = wx.Image(width, height)
+    image.SetData(rgbPixels.tobytes())
+    return image
 
 
-def show_legendre_reconstruction(superficie, coefficients, parent=None):
-    """
-    Show the reconstructed background next to the coefficient plot.
-
-    Parameters
-    ----------
-    superficie : ndarray
-        Surface rebuilt from the Legendre coefficients.
-    coefficients : sequence of float
-        The coefficients themselves, plotted on the right-hand panel.
-    parent : wx.Window, optional
-        Window the dialog belongs to.
-    """
-    app_creada = False
+def show_legendre_reconstruction(surface, coefficients, parent=None):
+    """Show the reconstructed background next to the coefficient plot."""
+    createdApp = False
     app = wx.GetApp()
     if app is None:
         app = wx.App(False)
-        app_creada = True
+        createdApp = True
 
-    dlg = wx.Dialog(parent, title="Legendre Reconstruction Results",
-                    style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
-    escala = hidpi.scale(dlg)
+    dialog = wx.Dialog(parent, title="Legendre Reconstruction Results",
+                       style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+    scaleFactor = hidpi.scale(dialog)
 
-    principal = wx.BoxSizer(wx.VERTICAL)
-    contenido = wx.BoxSizer(wx.HORIZONTAL)
+    mainSizer = wx.BoxSizer(wx.VERTICAL)
+    contentSizer = wx.BoxSizer(wx.HORIZONTAL)
 
     # ---------------------------------------------------- the surface
-    panel_izq = wx.Panel(dlg)
-    sizer_izq = wx.BoxSizer(wx.VERTICAL)
-    sizer_izq.Add(wx.StaticText(panel_izq,
+    leftPanel = wx.Panel(dialog)
+    leftSizer = wx.BoxSizer(wx.VERTICAL)
+    leftSizer.Add(wx.StaticText(leftPanel,
                                 label="Legendre-reconstructed background"),
                   0, wx.ALIGN_CENTER | wx.ALL, 5)
 
-    imagen = surface_image(superficie)
+    image = surface_image(surface)
 
-    # The reconstruction is square -- legendre_background works on a grid the
-    # height of the image -- and it used to be squashed into a fixed 500x400,
-    # which distorted it. It is fitted inside the box instead, keeping its
-    # proportions.
-    caja = dlg.FromDIP(wx.Size(400, 360))
-    factor = min(caja.width / imagen.GetWidth(), caja.height / imagen.GetHeight())
-    imagen = imagen.Scale(max(1, int(imagen.GetWidth() * factor)),
-                          max(1, int(imagen.GetHeight() * factor)),
-                          wx.IMAGE_QUALITY_HIGH)
+    # The reconstruction is square and must not be squashed into the box.
+    box = dialog.FromDIP(wx.Size(400, 360))
+    fitFactor = min(box.width / image.GetWidth(), box.height / image.GetHeight())
+    image = image.Scale(max(1, int(image.GetWidth() * fitFactor)),
+                        max(1, int(image.GetHeight() * fitFactor)),
+                        wx.IMAGE_QUALITY_HIGH)
 
-    sizer_izq.Add(wx.StaticBitmap(panel_izq, bitmap=hidpi.bitmap(imagen, dlg)),
+    leftSizer.Add(wx.StaticBitmap(leftPanel, bitmap=hidpi.bitmap(image, dialog)),
                   0, wx.ALIGN_CENTER | wx.ALL, 5)
-    panel_izq.SetSizer(sizer_izq)
-    contenido.Add(panel_izq, 0, wx.ALL, 5)
+    leftPanel.SetSizer(leftSizer)
+    contentSizer.Add(leftPanel, 0, wx.ALL, 5)
 
     # ---------------------------------------------------- the coefficients
-    panel_der = wx.Panel(dlg)
-    sizer_der = wx.BoxSizer(wx.VERTICAL)
-    sizer_der.Add(wx.StaticText(panel_der, label="Legendre coefficients"),
-                  0, wx.ALIGN_CENTER | wx.ALL, 5)
+    rightPanel = wx.Panel(dialog)
+    rightSizer = wx.BoxSizer(wx.VERTICAL)
+    rightSizer.Add(wx.StaticText(rightPanel, label="Legendre coefficients"),
+                   0, wx.ALIGN_CENTER | wx.ALL, 5)
 
-    fig = coefficient_figure(coefficients, escala)
-    sizer_der.Add(wx.StaticBitmap(panel_der, bitmap=hidpi.figure_bitmap(fig, dlg)),
-                  0, wx.ALIGN_CENTER | wx.ALL, 5)
-    panel_der.SetSizer(sizer_der)
-    contenido.Add(panel_der, 0, wx.ALL, 5)
+    fig = coefficient_figure(coefficients, scaleFactor)
+    rightSizer.Add(wx.StaticBitmap(rightPanel,
+                                   bitmap=hidpi.figure_bitmap(fig, dialog)),
+                   0, wx.ALIGN_CENTER | wx.ALL, 5)
+    rightPanel.SetSizer(rightSizer)
+    contentSizer.Add(rightPanel, 0, wx.ALL, 5)
 
-    principal.Add(contenido, 1, wx.EXPAND | wx.ALL, 10)
+    mainSizer.Add(contentSizer, 1, wx.EXPAND | wx.ALL, 10)
 
-    cerrar = wx.Button(dlg, wx.ID_CLOSE, "Close")
-    cerrar.Bind(wx.EVT_BUTTON, lambda evt: dlg.Close())
-    principal.Add(cerrar, 0, wx.ALIGN_CENTER | wx.BOTTOM, 10)
+    closeButton = wx.Button(dialog, wx.ID_CLOSE, "Close")
+    closeButton.Bind(wx.EVT_BUTTON, lambda evt: dialog.Close())
+    mainSizer.Add(closeButton, 0, wx.ALIGN_CENTER | wx.BOTTOM, 10)
 
-    # The window takes the size its contents need, rather than a fixed one
-    # that was right on the screen it was written on. Clamped so a very wide
-    # reconstruction cannot push it off the display.
-    dlg.SetSizer(principal)
-    principal.Fit(dlg)
-    pantalla = wx.GetClientDisplayRect()
-    dlg.SetSize(wx.Size(min(dlg.GetSize().width, pantalla.width),
-                        min(dlg.GetSize().height, pantalla.height)))
-    dlg.Centre()
+    # The size its contents need, clamped to the desktop.
+    dialog.SetSizer(mainSizer)
+    mainSizer.Fit(dialog)
+    desktop = wx.GetClientDisplayRect()
+    dialog.SetSize(wx.Size(min(dialog.GetSize().width, desktop.width),
+                           min(dialog.GetSize().height, desktop.height)))
+    dialog.Centre()
 
-    dlg.ShowModal()
-    dlg.Destroy()
+    dialog.ShowModal()
+    dialog.Destroy()
 
-    if app_creada:
+    if createdApp:
         try:
             app.Destroy()
         except Exception:

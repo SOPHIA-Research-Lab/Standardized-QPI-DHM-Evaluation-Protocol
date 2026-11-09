@@ -1,18 +1,5 @@
-"""
-One rule for every bitmap the application puts on screen.
-
-wx reads a bitmap's own pixels as LOGICAL units. Hand it a 400x300 bitmap on a
-200 % screen and the widget comes out 800x600, with the image stretched to
-fill it: twice the size it was meant to be, and soft, because the extra pixels
-were invented. That is why enabling DPI awareness made the toolbar icons grow,
-the Legendre window overflow and the threshold previews crush the controls
-underneath them.
-
-Everything here is drawn at the screen's real pixel count -- the phase images,
-the mask previews, the charts, the icons -- so each bitmap has to say so. A
-bitmap that carries its scale factor is laid out at the size it was drawn for
-and reaches the screen pixel for pixel.
-"""
+"""One rule for every bitmap the application puts on screen."""
+# wx reads a bitmap's pixels as LOGICAL units, so each one declares its scale.
 import numpy as np
 import wx
 
@@ -26,30 +13,20 @@ def scale(window=None):
 
 
 def bitmap(source, window=None):
-    """
-    A wx.Bitmap that draws 1:1 on screen.
-
-    `source` is a wx.Image or wx.Bitmap already rendered at the physical size
-    it should occupy.
-    """
-    bmp = source if isinstance(source, wx.Bitmap) else wx.Bitmap(source)
-    factor = scale(window)
-    if factor != 1.0:
-        bmp.SetScaleFactor(factor)
-    return bmp
+    """A wx.Bitmap from an image already rendered at its physical size."""
+    scaledBitmap = source if isinstance(source, wx.Bitmap) else wx.Bitmap(source)
+    scaleFactor = scale(window)
+    if scaleFactor != 1.0:
+        scaledBitmap.SetScaleFactor(scaleFactor)
+    return scaledBitmap
 
 
 def figure_bitmap(fig, window=None):
-    """
-    Render a matplotlib figure into a bitmap of the right size.
-
-    The figure must have been built with an Agg canvas at the screen's dpi;
-    see the note in legendre_viewer.coefficient_figure about why pyplot is not
-    used to make one.
-    """
+    """Render a matplotlib figure into a bitmap that draws 1:1 on screen."""
+    # The figure must carry an Agg canvas at the screen's dpi, not a pyplot one.
     fig.canvas.draw()
-    datos = np.asarray(fig.canvas.buffer_rgba())
-    alto, ancho = datos.shape[:2]
-    imagen = wx.Image(ancho, alto)
-    imagen.SetData(datos[:, :, :3].tobytes())
-    return bitmap(imagen, window)
+    rgbaPixels = np.asarray(fig.canvas.buffer_rgba())
+    height, width = rgbaPixels.shape[:2]
+    image = wx.Image(width, height)
+    image.SetData(rgbaPixels[:, :, :3].tobytes())
+    return bitmap(image, window)

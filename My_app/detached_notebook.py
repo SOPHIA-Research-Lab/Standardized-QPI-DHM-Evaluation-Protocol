@@ -7,38 +7,30 @@ from ui import hidpi
 
 
 def fit_bitmap(bitmap_ctrl, pil_img, zoom):
-    """
-    Draw the image at the panel's real pixel count.
-
-    The resize targets PHYSICAL pixels -- the panel's client size -- and the
-    bitmap then declares the screen's scale factor. Without that declaration
-    wx reads the bitmap's pixels as logical units and lays the control out at
-    twice the size, so the image was stretched to double and clipped by the
-    panel holding it. With it, a phase map on a 200 % display is resampled to
-    the pixels the monitor actually has instead of half of them.
-    """
+    """Draw the image at the panel's real pixel count."""
+    # Resized to PHYSICAL pixels; the scale factor keeps wx from doubling it.
     panel = bitmap_ctrl.Parent
-    panel_size = panel.GetClientSize()
-    img_w, img_h = pil_img.size
+    panelSize = panel.GetClientSize()
+    imageWidth, imageHeight = pil_img.size
 
-    if panel_size[0] > 0 and panel_size[1] > 0:
-        auto_scale = min(panel_size[0] / img_w, panel_size[1] / img_h)
+    if panelSize[0] > 0 and panelSize[1] > 0:
+        autoScale = min(panelSize[0] / imageWidth, panelSize[1] / imageHeight)
     else:
-        auto_scale = 1.0
+        autoScale = 1.0
 
-    total = auto_scale * zoom
-    nuevo = (max(1, int(img_w * total)), max(1, int(img_h * total)))
+    totalScale = autoScale * zoom
+    targetSize = (max(1, int(imageWidth * totalScale)), max(1, int(imageHeight * totalScale)))
 
-    resized = pil_img.resize(nuevo, Image.LANCZOS)
-    arr = np.array(resized.convert("RGB"))
-    bitmap = wx.Bitmap.FromBuffer(arr.shape[1], arr.shape[0], arr)
-    bitmap_ctrl.SetBitmap(hidpi.bitmap(bitmap, panel))
+    resizedImage = pil_img.resize(targetSize, Image.LANCZOS)
+    rgbPixels = np.array(resizedImage.convert("RGB"))
+    scaledBitmap = wx.Bitmap.FromBuffer(rgbPixels.shape[1], rgbPixels.shape[0], rgbPixels)
+    bitmap_ctrl.SetBitmap(hidpi.bitmap(scaledBitmap, panel))
     panel.Layout()
 
 class DetachedFrame(wx.Frame):
     """Independent window for images detached from the notebook."""
     
-    def __init__(self, parent, title, pil_img, notebook, page_data=None):
+    def __init__(self, title, pil_img, notebook, page_data=None):
         super().__init__(parent=None, title=title,
                          size=wx.Window.FromDIP(wx.Size(400, 300), None))
         self.notebook = notebook
@@ -48,9 +40,9 @@ class DetachedFrame(wx.Frame):
 
         panel = wx.Panel(self)
         self.bitmap_ctrl = wx.StaticBitmap(panel)
-        sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(self.bitmap_ctrl, 1, wx.EXPAND | wx.ALL, 5)
-        panel.SetSizer(sizer)
+        panelSizer = wx.BoxSizer(wx.VERTICAL)
+        panelSizer.Add(self.bitmap_ctrl, 1, wx.EXPAND | wx.ALL, 5)
+        panel.SetSizer(panelSizer)
 
         panel.Bind(wx.EVT_MOUSEWHEEL, self.on_zoom)
         self.bitmap_ctrl.Bind(wx.EVT_MOUSEWHEEL, self.on_zoom)
@@ -81,11 +73,11 @@ class DetachedFrame(wx.Frame):
 
     def check_reattach(self, event):
         """Check if window should reattach to notebook on drag."""
-        frame_rect = self.GetScreenRect()
-        main_frame = self.notebook.GetTopLevelParent()
-        main_rect = main_frame.GetScreenRect()
+        frameRect = self.GetScreenRect()
+        mainFrame = self.notebook.GetTopLevelParent()
+        mainRect = mainFrame.GetScreenRect()
 
-        if main_rect.Intersects(frame_rect):
+        if mainRect.Intersects(frameRect):
             self.notebook.add_image_tab(self.pil_img, self.GetTitle(), self.page_data)
             self.Destroy()
         else:
@@ -103,36 +95,33 @@ class ImageNotebook(wx.aui.AuiNotebook):
 
     def _unique_title(self, title):
         """Return `title`, or `title (2)`, `title (3)`... if it is already taken."""
-        tomados = {self.GetPageText(i) for i in range(self.GetPageCount())}
-        if title not in tomados:
+        takenTitles = {self.GetPageText(pageIndex) for pageIndex in range(self.GetPageCount())}
+        if title not in takenTitles:
             return title
-        n = 2
-        while "%s (%d)" % (title, n) in tomados:
-            n += 1
-        return "%s (%d)" % (title, n)
+        suffix = 2
+        while "%s (%d)" % (title, suffix) in takenTitles:
+            suffix += 1
+        return "%s (%d)" % (title, suffix)
 
     def add_image_tab(self, pil_img, title, page_data=None):
         """Add image tab with optional complex data (amplitude, phase)."""
         panel = wx.Panel(self)
         panel.pil_img = pil_img
-        panel.scale_factor = 1.0  # User zoom (mouse wheel)
+        panel.scale_factor = 1.0
 
-        bitmap_ctrl = wx.StaticBitmap(panel)
-        panel.bitmap_ctrl = bitmap_ctrl
+        bitmapCtrl = wx.StaticBitmap(panel)
+        panel.bitmap_ctrl = bitmapCtrl
 
-        sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(bitmap_ctrl, 1, wx.EXPAND | wx.ALL, 5)
-        panel.SetSizer(sizer)
+        panelSizer = wx.BoxSizer(wx.VERTICAL)
+        panelSizer.Add(bitmapCtrl, 1, wx.EXPAND | wx.ALL, 5)
+        panel.SetSizer(panelSizer)
 
-        # Adjust image to fit panel size when creating tab
-        panel.Bind(wx.EVT_SIZE, lambda evt: self._update_bitmap(bitmap_ctrl, pil_img, panel.scale_factor))
-        wx.CallAfter(self._update_bitmap, bitmap_ctrl, pil_img, panel.scale_factor)
+        panel.Bind(wx.EVT_SIZE, lambda evt: self._update_bitmap(bitmapCtrl, pil_img, panel.scale_factor))
+        wx.CallAfter(self._update_bitmap, bitmapCtrl, pil_img, panel.scale_factor)
 
-        # Allow zoom with mouse wheel
         panel.Bind(wx.EVT_MOUSEWHEEL, self.on_zoom)
-        bitmap_ctrl.Bind(wx.EVT_MOUSEWHEEL, self.on_zoom)
+        bitmapCtrl.Bind(wx.EVT_MOUSEWHEEL, self.on_zoom)
 
-        # Save additional data (amplitude, phase, etc.)
         if page_data:
             for key, value in page_data.items():
                 setattr(panel, key, value)
@@ -141,10 +130,7 @@ class ImageNotebook(wx.aui.AuiNotebook):
             panel.amplitude = None
             panel.phase = None
 
-        # The tab text is the key the results table uses to identify an image
-        # (_find_or_create_row matches on it), so two files with the same base
-        # name from different folders used to share a row and silently
-        # overwrite each other.
+        # The tab text is the row key in the results table, so it must be unique.
         self.AddPage(panel, self._unique_title(title))
         self.SetSelection(self.GetPageCount() - 1)
         return panel
@@ -155,8 +141,8 @@ class ImageNotebook(wx.aui.AuiNotebook):
 
     def on_zoom(self, event):
         """Handle mouse wheel zoom for specific panel."""
-        event_obj = event.GetEventObject()
-        panel = event_obj
+        eventObject = event.GetEventObject()
+        panel = eventObject
         while panel and not isinstance(panel, wx.Panel):
             panel = panel.GetParent()
         
@@ -174,54 +160,46 @@ class ImageNotebook(wx.aui.AuiNotebook):
 
     def on_end_drag(self, event):
         """Handle tab dragging outside notebook."""
-        mouse = wx.GetMousePosition()
-        frame = self.GetTopLevelParent()
+        mousePosition = wx.GetMousePosition()
+        topFrame = self.GetTopLevelParent()
         
-        if not frame.GetScreenRect().Contains(mouse):
-            idx = event.GetSelection()
-            if idx != wx.NOT_FOUND:
-                title = self.GetPageText(idx)
-                panel = self.GetPage(idx)
-                pil_img = panel.pil_img
-                page_data = self._extract_page_data(panel)
+        if not topFrame.GetScreenRect().Contains(mousePosition):
+            pageIndex = event.GetSelection()
+            if pageIndex != wx.NOT_FOUND:
+                pageTitle = self.GetPageText(pageIndex)
+                panel = self.GetPage(pageIndex)
+                pilImage = panel.pil_img
+                pageData = self._extract_page_data(panel)
                 
-                self.DeletePage(idx)
-                detached = DetachedFrame(self.GetTopLevelParent(), title, pil_img, self, page_data)
-                detached.Show()
+                self.DeletePage(pageIndex)
+                detachedFrame = DetachedFrame(pageTitle, pilImage, self, pageData)
+                detachedFrame.Show()
         event.Skip()
 
     def _extract_page_data(self, panel):
         """Extract additional data from panel."""
-        data = {}
-        attrs_to_preserve = ['is_mat_complex', 'amplitude', 'phase', 'complex_field_name']
-        for attr in attrs_to_preserve:
-            if hasattr(panel, attr):
-                data[attr] = getattr(panel, attr)
-        return data
+        preserved = {}
+        attributesToPreserve = ['is_mat_complex', 'amplitude', 'phase',
+                                'complex_field_name', 'is_sample']
+        for attributeName in attributesToPreserve:
+            if hasattr(panel, attributeName):
+                preserved[attributeName] = getattr(panel, attributeName)
+        return preserved
 
     def get_current_image(self):
         """Get current PIL image."""
-        idx = self.GetSelection()
-        if idx == wx.NOT_FOUND:
+        pageIndex = self.GetSelection()
+        if pageIndex == wx.NOT_FOUND:
             return None
-        panel = self.GetPage(idx)
+        panel = self.GetPage(pageIndex)
         return getattr(panel, 'pil_img', None)
 
     def get_current_image_name(self):
         """Get current image name (tab title)."""
-        idx = self.GetSelection()
-        return None if idx == wx.NOT_FOUND else self.GetPageText(idx)
+        pageIndex = self.GetSelection()
+        return None if pageIndex == wx.NOT_FOUND else self.GetPageText(pageIndex)
 
     def get_current_page(self):
         """Get current panel with all attributes."""
-        idx = self.GetSelection()
-        return None if idx == wx.NOT_FOUND else self.GetPage(idx)
-
-    def get_current_phase_data(self):
-        """Get phase data from current image if available."""
-        page = self.get_current_page()
-        if page is None:
-            return None
-        if hasattr(page, 'is_mat_complex') and page.is_mat_complex:
-            return getattr(page, 'phase', None)
-        return None
+        pageIndex = self.GetSelection()
+        return None if pageIndex == wx.NOT_FOUND else self.GetPage(pageIndex)

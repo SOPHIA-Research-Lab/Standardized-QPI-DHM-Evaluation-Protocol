@@ -1,438 +1,651 @@
-"""
-Interactive threshold selection for the background mask.
+"""Interactive background segmentation for Module I.
 
-This lived inside analysis/module1/utilitiesRBPV.py, so importing anything from
-the analysis layer pulled wx in with it. The dialog moved here; deciding what
-the chosen threshold means for the mask stayed there, in build_background_mask.
-
-The entry point is create_background_mask(): it asks the user for a threshold,
-then hands it to the analysis layer. Returns (background_mask, threshold), or
-(None, None) if the dialog was cancelled.
+The previews sit on the left, the controls on the right, in the order they are
+used: what is measured, how the image is prepared, where the threshold goes,
+how the mask is cleaned. The recipe is chosen once for a batch; only the
+threshold is tuned per image.
 """
-import cv2
+# Split off from utilitiesRBPV, which pulled wx into the analysis layer.
+import math
+
 import numpy as np
 import wx
 
-from analysis.module1.utilitiesRBPV import build_background_mask
+from analysis.module1.segmentation import (Recipe, THRESHOLD_METHODS,
+                                           THRESHOLD_HINTS, THRESHOLD_LABELS,
+                                           build_mask)
 from ui import hidpi
 
-
-#: The welcome text explains the tool, not this particular image, so it is shown
-#: once per session. Segmentation is asked per image -- each one gets its own
-#: threshold -- which used to mean dismissing the same instructions N times.
+#: The notice is shown once per session, not once per image.
 _WELCOME_SHOWN = False
 
 
-def numpy_to_wx_bitmap(arr: np.ndarray, target_size=(400, 400), window=None):
-    """
-    Convert numpy array (H,W) or (H,W,3) to wx.Bitmap, fitting target_size.
+class _Swatch(wx.Panel):
+    """A rounded colour chip. wx has no rounded static control, and a plain
+    square panel reads as an unfinished widget rather than a key."""
 
-    `target_size` is in physical pixels, and `window` is what tells the bitmap
-    the screen's scale -- without it wx lays the result out at twice the size
-    on a 200 % display. See ui/hidpi.py.
-    """
+    def __init__(self, parent, colour, size):
+        super().__init__(parent, size=size)
+        self._colour = wx.Colour(*colour)
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.Bind(wx.EVT_PAINT, self._on_paint)
+
+    def _on_paint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        dc.SetBackground(wx.Brush(self.GetParent().GetBackgroundColour()))
+        dc.Clear()
+        context = wx.GraphicsContext.Create(dc)
+        if context is None:
+            return
+        width, height = self.GetSize()
+        context.SetBrush(wx.Brush(self._colour))
+        # A hairline a shade darker, so a pale chip still has an edge.
+        context.SetPen(wx.Pen(wx.Colour(max(0, self._colour.Red() - 45),
+                                        max(0, self._colour.Green() - 45),
+                                        max(0, self._colour.Blue() - 45)), 1))
+        context.DrawRoundedRectangle(0.5, 0.5, width - 1, height - 1,
+                                     min(width, height) / 3.0)
+
+
+def numpy_to_wx_bitmap(arr: np.ndarray, target_size=(400, 400), window=None):
+    """Convert a numpy array to a wx.Bitmap fitted inside target_size."""
+    # `target_size` is in physical pixels; `window` gives the screen's scale.
     if arr.dtype != np.uint8:
         arr = (np.clip(arr, 0, 1) * 255).astype(np.uint8) if arr.max() <= 1.0 else arr.astype(np.uint8)
-    
+
     if arr.ndim == 2:
-        h, w = arr.shape
-        rgb = np.dstack([arr, arr, arr])
+        sourceHeight, sourceWidth = arr.shape
+        rgbPixels = np.dstack([arr, arr, arr])
     else:
-        h, w, _ = arr.shape
-        rgb = arr
-    
-    img = wx.Image(w, h)
-    img.SetData(rgb.tobytes())
+        sourceHeight, sourceWidth, _ = arr.shape
+        rgbPixels = arr
 
-    # Calculate scaling to fit within target_size while maintaining aspect ratio
-    target_w, target_h = target_size
-    scale_w = target_w / w
-    scale_h = target_h / h
-    scale = min(scale_w, scale_h)
-    
-    new_w = int(w * scale)
-    new_h = int(h * scale)
-    
-    # Always scale to fit target size
-    if scale != 1.0:
-        img = img.Scale(new_w, new_h, wx.IMAGE_QUALITY_HIGH)
+    image = wx.Image(sourceWidth, sourceHeight)
+    image.SetData(rgbPixels.tobytes())
 
-    return hidpi.bitmap(img, window)
+    # Fitted inside the box, keeping the aspect ratio.
+    targetWidth, targetHeight = target_size
+    fitFactor = min(targetWidth / sourceWidth, targetHeight / sourceHeight)
+
+    if fitFactor != 1.0:
+        image = image.Scale(int(sourceWidth * fitFactor),
+                            int(sourceHeight * fitFactor), wx.IMAGE_QUALITY_HIGH)
+
+    return hidpi.bitmap(image, window)
 
 
-# ------------------------------------------------
-# wx Dialog for threshold
-# ------------------------------------------------
 class WxThresholdDialog(wx.Dialog):
-    """Interactive threshold selector using wxPython."""
+    """Interactive background segmentation using wxPython."""
 
-    def __init__(self, parent, image: np.ndarray, initial_threshold: float = None,
-                 min_area: int = 100, hole_area: int = 50, title="Threshold Selector"):
-        super().__init__(parent, title=title, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
-        
+    #: Idle time before the preview is recomputed, in milliseconds.
+    PREVIEW_DELAY_MS = 200
+
+    #: One preview. A sample mask is the exact negative of a background one,
+    #: and the filtered copy only differs from the phase when a filter is on;
+    #: what has to be checked is which pixels end up being measured, and that
+    #: is only legible drawn over the phase itself.
+    #: The sample is tinted; what stays grey is what the metrics will read.
+    SAMPLE_TINT = (220, 70, 70)
+    BACKGROUND_SWATCH = (150, 150, 150)
+
+    def __init__(self, parent, image: np.ndarray, recipe: Recipe = None,
+                 recipe_locked: bool = False, image_name: str = "",
+                 title="Background Segmentation"):
+        super().__init__(parent, title=title,
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+
         self.image = np.array(image, dtype=float)
-        self.min_area = min_area
-        self.hole_area = hole_area
+        self.image_name = image_name
+        self.recipe = Recipe(**vars(recipe)) if recipe is not None else Recipe()
 
-        # Normalize image to 0-1 range
-        img = self.image.copy()
-        mi, ma = img.min(), img.max()
-        if ma - mi < 1e-12:
-            self.img_normalized = np.zeros_like(img, dtype=float)
-        else:
-            self.img_normalized = (img - mi) / (ma - mi)
-        
-        # Convert to uint8 for display
-        self.img_u8 = (self.img_normalized * 255).astype(np.uint8)
+        # Second image onward: the batch keeps its recipe so that every row of
+        # the results table was segmented the same way. Only the threshold is
+        # per image -- and the automatic methods recompute it on their own.
+        self.recipe_locked = recipe_locked
+        self.override = False
 
-        # Calculate Otsu threshold in 0-1 range
-        thr_u8, _ = cv2.threshold(self.img_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        self.otsu_thr = float(thr_u8) / 255.0
-        
-        if initial_threshold is None:
-            self.current_threshold = self.otsu_thr
-        else:
-            self.current_threshold = float(np.clip(initial_threshold, 0.0, 1.0))
+        self.confirmed = False
 
-        # The preview is shown at about 450x350 px, so computing it at full
-        # resolution is wasted work: 10.7 s per update on a 4096x4096 image
-        # against 0.38 s on a 1024-px copy. Only the PREVIEW is subsampled --
-        # the mask returned on OK is rebuilt at full resolution by
-        # create_background_mask().
+        # Only the PREVIEW is subsampled: 10.7 s per update against 0.38 s.
         self.preview_step = max(1, max(self.image.shape) // 1024)
 
-        self.sample_is_white = True
-        self.confirmed = False
-        self.final_threshold = self.current_threshold
-        
-        # Preview size, in physical pixels: a share of the screen, capped at
-        # a comfortable size expressed in logical units so the cap means the
-        # same thing on every display.
-        util = wx.GetClientDisplayRect()
-        self.preview_w = min(self.FromDIP(420), int(util.width * 0.26))
-        self.preview_h = min(self.FromDIP(330), int(util.height * 0.35))
+        # A share of the screen, capped in logical units so the cap travels.
+        # One preview instead of four, so it gets the room they shared.
+        desktop = wx.GetClientDisplayRect()
+        self.preview_w = min(self.FromDIP(640), int(desktop.width * 0.42))
+        # The box follows the image's own shape, so a landscape field does not
+        # sit in a portrait frame with a blank band under it.
+        rows, columns = self.image.shape[:2]
+        self.preview_h = min(int(self.preview_w * rows / max(1, columns)),
+                             int(desktop.height * 0.62))
         self.preview_size = (self.preview_w, self.preview_h)
 
+        self._last_result = None
+        # Guards the slider/box pair against echoing each other's updates.
+        self._syncing = False
         self._build_ui()
+        self._sync_controls()
         self._update_previews()
 
-        # The window asks its contents how big it has to be. It used to be
-        # given the previews plus 280 px for everything underneath, which at
-        # 200 % was half of what the controls needed: the threshold slider was
-        # squeezed into a few pixels and its label cut off mid-word.
         self.GetSizer().Fit(self)
-        self.SetSize(wx.Size(min(self.GetSize().width, util.width),
-                             min(self.GetSize().height, util.height)))
+        self.SetSize(wx.Size(min(self.GetSize().width, desktop.width),
+                             min(self.GetSize().height, desktop.height)))
         self.Centre()
         wx.CallAfter(self._show_welcome_message)
 
+    # ------------------------------------------------------------------- help
     def _show_welcome_message(self):
+        """State what the mask is for, once per session."""
         global _WELCOME_SHOWN
         if _WELCOME_SHOWN:
             return
         _WELCOME_SHOWN = True
 
-        dlg = wx.MessageDialog(
+        dialog = wx.MessageDialog(
             self,
-            "Welcome to the Threshold Selector.\n\n"
-            "Instructions:\n"
-            "Now adjust the binarization threshold that accurately \n" \
-            "discriminates between background and sample regions.\n\n"
-            "Verify the Binary Preview, Sample Mask and Background Mask.\n"
-            "Press OK to continue.",
-            "Threshold Selection",
+            "The metrics of this module are measured on background pixels "
+            "only.\n\n"
+            "Select a mask that excludes the sample. The metrics then read the "
+            "original phase values of the pixels the mask leaves as background; "
+            "the filters below choose that region and nothing else.",
+            "Background Segmentation",
             wx.OK | wx.ICON_INFORMATION
         )
-        dlg.ShowModal()
-        dlg.Destroy()
+        dialog.ShowModal()
+        dialog.Destroy()
 
+    # --------------------------------------------------------------------- ui
     def _build_ui(self):
-        main_sizer = wx.BoxSizer(wx.VERTICAL)
-        
-        # Create grid with panels for better control
-        grid = wx.GridSizer(rows=2, cols=2, gap=(10, 10))
+        outer = wx.BoxSizer(wx.HORIZONTAL)
+        outer.Add(self._build_previews(), 1, wx.EXPAND | wx.ALL, 10)
+        outer.Add(self._build_controls(), 0, wx.EXPAND | wx.TOP | wx.BOTTOM | wx.RIGHT, 10)
+        self.SetSizer(outer)
 
-        # Create panels for each preview with fixed size
-        self.panel_original = self._create_preview_panel("Original Image")
-        self.panel_binary = self._create_preview_panel("Binary Preview")
-        self.panel_sample = self._create_preview_panel("Sample Mask")
-        self.panel_background = self._create_preview_panel("Background Mask")
-        
-        grid.Add(self.panel_original, 1, wx.EXPAND)
-        grid.Add(self.panel_binary, 1, wx.EXPAND)
-        grid.Add(self.panel_sample, 1, wx.EXPAND)
-        grid.Add(self.panel_background, 1, wx.EXPAND)
-        
-        main_sizer.Add(grid, 1, wx.ALL | wx.EXPAND, 10)
-
-        ctrl_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        
-        # Radio buttons for polarity
-        radio_box = wx.StaticBox(self, label="Sample Polarity")
-        radio_sizer = wx.StaticBoxSizer(radio_box, orient=wx.VERTICAL)
-        self.radio_white = wx.RadioButton(self, label="White sample", style=wx.RB_GROUP)
-        self.radio_black = wx.RadioButton(self, label="Black sample")
-        self.radio_white.SetValue(True)
-        radio_sizer.Add(self.radio_white, 0, wx.ALL, 5)
-        radio_sizer.Add(self.radio_black, 0, wx.ALL, 5)
-        ctrl_sizer.Add(radio_sizer, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 10)
-
-        # Threshold controls
-        mid_sizer = wx.BoxSizer(wx.VERTICAL)
-        self.slider_label = wx.StaticText(self, label=f"Threshold (0–1): {self.current_threshold:.4f}")
-        mid_sizer.Add(self.slider_label, 0, wx.LEFT | wx.TOP, 6)
-        
-        # Slider with 1000 steps for precision (0.001 increments)
-        self.slider = wx.Slider(self, value=int(self.current_threshold * 1000),
-                                minValue=0, maxValue=1000, style=wx.SL_HORIZONTAL)
-        mid_sizer.Add(self.slider, 0, wx.EXPAND | wx.ALL, 6)
-        
-        otsu_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        self.btn_reset_otsu = wx.Button(self, label=f"Reset to Otsu ({self.otsu_thr:.4f})")
-        self.info_text = wx.StaticText(self, label="")
-        otsu_sizer.Add(self.btn_reset_otsu, 0, wx.RIGHT, 8)
-        otsu_sizer.Add(self.info_text, 1, wx.ALIGN_CENTER_VERTICAL)
-        mid_sizer.Add(otsu_sizer, 0, wx.EXPAND | wx.ALL, 6)
-        ctrl_sizer.Add(mid_sizer, 1, wx.EXPAND | wx.ALL, 6)
-
-        # Cleanup sizes. These were hardcoded (min_area=100, hole_area=50)
-        # and invisible, yet they decide whether small objects survive at all:
-        # on the probiotics sample, min_area 100 vs 10 changes the detected
-        # sample area by 25x. Small samples were being erased in silence.
-        clean_box = wx.StaticBox(self, label="Cleanup")
-        clean_sizer = wx.StaticBoxSizer(clean_box, orient=wx.VERTICAL)
-
-        fila_obj = wx.BoxSizer(wx.HORIZONTAL)
-        fila_obj.Add(wx.StaticText(self, label="Discard objects under"), 0,
-                     wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 4)
-        self.spin_min_area = wx.SpinCtrl(self, min=1, max=100000,
-                                         initial=self.min_area,
-                                         size=self.FromDIP(wx.Size(80, -1)))
-        fila_obj.Add(self.spin_min_area, 0, wx.ALIGN_CENTER_VERTICAL)
-        fila_obj.Add(wx.StaticText(self, label="px"), 0,
-                     wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
-        clean_sizer.Add(fila_obj, 0, wx.ALL, 4)
-
-        fila_hue = wx.BoxSizer(wx.HORIZONTAL)
-        fila_hue.Add(wx.StaticText(self, label="Fill holes under"), 0,
-                     wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 4)
-        self.spin_hole_area = wx.SpinCtrl(self, min=1, max=100000,
-                                          initial=self.hole_area,
-                                          size=self.FromDIP(wx.Size(80, -1)))
-        fila_hue.Add(self.spin_hole_area, 0, wx.ALIGN_CENTER_VERTICAL)
-        fila_hue.Add(wx.StaticText(self, label="px"), 0,
-                     wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
-        clean_sizer.Add(fila_hue, 0, wx.ALL, 4)
-
-        ctrl_sizer.Add(clean_sizer, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 10)
-
-        # OK/Cancel buttons
-        btn_sizer = wx.BoxSizer(wx.VERTICAL)
-        self.btn_ok = wx.Button(self, label="OK")
-        self.btn_cancel = wx.Button(self, label="Cancel")
-        btn_sizer.Add(self.btn_ok, 0, wx.ALL, 6)
-        btn_sizer.Add(self.btn_cancel, 0, wx.ALL, 6)
-        ctrl_sizer.Add(btn_sizer, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
-        
-        main_sizer.Add(ctrl_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
-        self.SetSizer(main_sizer)
-
-        # Bind events
-        # Recomputing the masks costs ~0.12 s on a 1280x960 image, and the
-        # slider has 1000 steps: dragging it used to queue dozens of those and
-        # the dialog stopped responding. Events are coalesced instead, so a
-        # drag recomputes once, when the hand stops.
+        # ~0.3 s per update over 1000 slider steps, so events are coalesced.
         self._preview_timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, lambda evt: self._update_previews(),
                   self._preview_timer)
 
-        self.slider.Bind(wx.EVT_SLIDER, self._on_slider)
-        self.radio_white.Bind(wx.EVT_RADIOBUTTON, self._on_radio)
-        self.radio_black.Bind(wx.EVT_RADIOBUTTON, self._on_radio)
-        self.spin_min_area.Bind(wx.EVT_SPINCTRL, self._on_cleanup)
-        self.spin_hole_area.Bind(wx.EVT_SPINCTRL, self._on_cleanup)
-        self.btn_reset_otsu.Bind(wx.EVT_BUTTON, self._on_reset_otsu)
+    def _build_previews(self):
+        column = wx.BoxSizer(wx.VERTICAL)
+
+        caption = wx.StaticText(self, label="Measured background")
+        font = caption.GetFont()
+        font.SetPointSize(font.GetPointSize() + 3)
+        caption.SetFont(font.Bold())
+        caption.SetForegroundColour(wx.Colour(45, 45, 45))
+        column.Add(caption, 0, wx.ALIGN_CENTER | wx.TOP, 18)
+
+        column.Add(self._build_legend(), 0, wx.ALIGN_CENTER | wx.TOP | wx.BOTTOM, 10)
+
+        self._bitmap = wx.StaticBitmap(self)
+        self._bitmap.SetMinSize((self.preview_w, self.preview_h))
+        column.Add(self._bitmap, 1, wx.ALIGN_CENTER)
+        return column
+
+    def _build_legend(self):
+        """Says what the two colours mean, where they are being looked at."""
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        chip = self.FromDIP(wx.Size(13, 13))
+        entries = ((self.SAMPLE_TINT, "Sample", "excluded"),
+                   (self.BACKGROUND_SWATCH, "Background", "measured"))
+        for index, (colour, name, role) in enumerate(entries):
+            if index:
+                row.AddSpacer(self.FromDIP(26))
+            row.Add(_Swatch(self, colour, chip), 0,
+                    wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 7)
+
+            label = wx.StaticText(self, label=name)
+            label.SetForegroundColour(wx.Colour(45, 45, 45))
+            row.Add(label, 0, wx.ALIGN_CENTER_VERTICAL)
+
+            # The role in lighter grey: it is the gloss, not the key.
+            note = wx.StaticText(self, label="  " + role)
+            note.SetForegroundColour(wx.Colour(130, 130, 130))
+            row.Add(note, 0, wx.ALIGN_CENTER_VERTICAL)
+        return row
+
+    def _build_controls(self):
+        column = wx.BoxSizer(wx.VERTICAL)
+        width = self.FromDIP(300)
+
+        if self.image_name:
+            heading = wx.StaticText(self, label=self.image_name)
+            headingFont = heading.GetFont()
+            headingFont.SetPointSize(headingFont.GetPointSize() + 2)
+            heading.SetFont(headingFont.Bold())
+            heading.SetForegroundColour(wx.Colour(45, 45, 45))
+            column.Add(heading, 0, wx.BOTTOM, 10)
+
+        column.Add(self._build_batch_box(width), 0, wx.EXPAND | wx.BOTTOM, 8)
+        column.Add(self._build_prepare_box(width), 0, wx.EXPAND | wx.BOTTOM, 8)
+        column.Add(self._build_threshold_box(width), 0, wx.EXPAND | wx.BOTTOM, 8)
+        column.Add(self._build_cleanup_box(width), 0, wx.EXPAND | wx.BOTTOM, 8)
+        column.Add(self._build_readout(width), 0, wx.EXPAND | wx.BOTTOM, 12)
+
+        # Right under the result they confirm, not pinned to the bottom of a
+        # column whose height depends on which boxes happen to be shown.
+        buttonRow = wx.BoxSizer(wx.HORIZONTAL)
+        self.btn_cancel = wx.Button(self, label="Cancel")
+        self.btn_ok = wx.Button(self, label="OK")
+        self.btn_ok.SetDefault()
+        for button in (self.btn_cancel, self.btn_ok):
+            button.SetMinSize(self.FromDIP(wx.Size(112, 38)))
+            buttonFont = button.GetFont()
+            buttonFont.SetPointSize(buttonFont.GetPointSize() + 1)
+            button.SetFont(buttonFont)
+        buttonRow.AddStretchSpacer()
+        buttonRow.Add(self.btn_cancel, 0, wx.RIGHT, 10)
+        buttonRow.Add(self.btn_ok, 0)
+        column.Add(buttonRow, 0, wx.EXPAND)
+
+        column.AddStretchSpacer()
+
         self.btn_ok.Bind(wx.EVT_BUTTON, self._on_ok)
         self.btn_cancel.Bind(wx.EVT_BUTTON, self._on_cancel)
+        return column
 
-    def _create_preview_panel(self, label_text):
-        """Create a panel with label and StaticBitmap for preview."""
-        panel = wx.Panel(self)
-        sizer = wx.BoxSizer(wx.VERTICAL)
-        
-        # Label
-        label = wx.StaticText(panel, label=label_text)
-        sizer.Add(label, 0, wx.ALIGN_CENTER | wx.TOP, 2)
-        
-        # StaticBitmap with fixed minimum size
-        bitmap = wx.StaticBitmap(panel)
-        bitmap.SetMinSize((self.preview_w, self.preview_h))
-        sizer.Add(bitmap, 1, wx.ALL, 5)
-        
-        panel.SetSizer(sizer)
-        
-        # Store reference to bitmap widget
-        setattr(self, f"bmp_{label_text.lower().replace(' ', '_')}", bitmap)
-        
-        return panel
+    def _box(self, label, width):
+        box = wx.StaticBox(self, label=label)
+        box.SetMinSize(wx.Size(width, -1))
+        return box, wx.StaticBoxSizer(box, orient=wx.VERTICAL)
 
-    #: Idle time before the preview is recomputed, in milliseconds.
-    PREVIEW_DELAY_MS = 150
+    def _build_batch_box(self, width):
+        """Only shown from the second image on, when a recipe already exists."""
+        box, sizer = self._box("Batch recipe", width)
+        if not self.recipe_locked:
+            box.Hide()
+            return sizer
+
+        summary = wx.StaticText(self, label=self.recipe.describe())
+        summary.Wrap(width - 20)
+        sizer.Add(summary, 0, wx.ALL, 5)
+
+        self.check_override = wx.CheckBox(
+            self, label="Change the recipe for this image")
+        self.check_override.SetToolTip(
+            "The rows of the table stop being directly comparable. The "
+            "deviation is recorded with the result.")
+        sizer.Add(self.check_override, 0, wx.ALL, 5)
+        self.check_override.Bind(wx.EVT_CHECKBOX, self._on_override)
+        return sizer
+
+    def _build_prepare_box(self, width):
+        box, sizer = self._box("1 - Prepare the image", width)
+
+        self.spin_tophat = self._spin_row(
+            sizer, "Remove background curvature", 0, 200,
+            "Top-hat radius, in pixels. Set it a little larger than the "
+            "biggest sample feature. This is the control that matters when a "
+            "single threshold cannot fit the whole field.")
+        self.spin_median = self._spin_row(
+            sizer, "Smooth isolated noise", 0, 20,
+            "Median radius, in pixels. Removes lone outlying pixels without "
+            "moving the edges.")
+        return sizer
+
+    def _build_threshold_box(self, width):
+        box, sizer = self._box("2 - Place the threshold", width)
+
+        self.choice_method = wx.Choice(
+            self, choices=[THRESHOLD_LABELS[name] for name in THRESHOLD_METHODS])
+        sizer.Add(self.choice_method, 0, wx.EXPAND | wx.ALL, 4)
+        # The hint each method carries lives in its tooltip, not on a line of
+        # its own that changes height every time the choice changes.
+        self.choice_method.SetToolTip(
+            "\n".join("%s - %s" % (THRESHOLD_LABELS[name], THRESHOLD_HINTS[name])
+                      for name in THRESHOLD_METHODS))
+        self.choice_method.Bind(wx.EVT_CHOICE, self._on_method)
+
+        header = wx.BoxSizer(wx.HORIZONTAL)
+        self.slider_label = wx.StaticText(self, label="")
+        header.Add(self.slider_label, 1, wx.ALIGN_CENTER_VERTICAL)
+        # The level is a fraction, so the box steps in thousandths.
+        self.threshold_entry = wx.SpinCtrlDouble(
+            self, min=0.0, max=1.0, inc=0.001,
+            size=self.FromDIP(wx.Size(96, -1)))
+        self.threshold_entry.SetDigits(4)
+        header.Add(self.threshold_entry, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 6)
+        sizer.Add(header, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 4)
+
+        # 1000 steps, so the threshold moves in increments of 0.001.
+        self.slider = wx.Slider(self, value=500, minValue=0, maxValue=1000,
+                                style=wx.SL_HORIZONTAL)
+        sizer.Add(self.slider, 0, wx.EXPAND | wx.ALL, 4)
+        self.slider.Bind(wx.EVT_SLIDER, self._on_slider)
+        self.threshold_entry.Bind(wx.EVT_SPINCTRLDOUBLE, self._on_threshold_typed)
+        self.threshold_entry.Bind(wx.EVT_KILL_FOCUS, self._on_threshold_typed)
+        return sizer
+
+    def _on_threshold_typed(self, event):
+        """The level typed or stepped in the box: move the slider under it."""
+        event.Skip()
+        if self._syncing:
+            return
+        self._syncing = True
+        self.recipe.manual_threshold = float(self.threshold_entry.GetValue())
+        self.slider.SetValue(int(round(self.recipe.manual_threshold * 1000)))
+        self.slider_label.SetLabel("Threshold")
+        self._syncing = False
+        self._schedule_preview()
+
+    def _build_cleanup_box(self, width):
+        box, sizer = self._box("3 - Clean the mask", width)
+        self.spin_min_area = self._spin_row(
+            sizer, "Discard objects under (px)", 1, 100000,
+            "Specks smaller than this are not treated as sample.", log=True)
+        self.spin_hole_area = self._spin_row(
+            sizer, "Fill holes under (px)", 1, 100000,
+            "Gaps inside a sample smaller than this are filled.", log=True)
+        self.spin_guard = self._spin_row(
+            sizer, "Guard band around sample (px)", 0, 50,
+            "Grows the sample before the background is taken, so the halo "
+            "around it stays out of the measurement. That halo is where "
+            "compensation error concentrates, and it inflates STD and PV.")
+        self.spin_border = self._spin_row(
+            sizer, "Exclude border (px)", 0, 300,
+            "Drops a margin all the way round the field. Reconstruction "
+            "leaves its worst artefacts at the edges -- unwrapping seams, "
+            "filter ringing, the corners of the spectrum -- and they are not "
+            "background however flat the middle of the image looks.")
+
+        self.check_invert = wx.CheckBox(
+            self, label="Invert (background is the smaller region)")
+        self.check_invert.SetToolTip(
+            "The background is normally the larger of the two regions. Tick "
+            "this for a field where the sample covers more than half of it.")
+        sizer.Add(self.check_invert, 0, wx.ALL, 4)
+        self.check_invert.Bind(wx.EVT_CHECKBOX, self._on_change)
+        return sizer
+
+    def _spin_row(self, sizer, label, low, high, tip, log=False):
+        """A labelled slider with a numeric box beside the name.
+
+        The box is the value: it can be typed into or stepped with the arrows,
+        and the slider follows. The slider is for sweeping, the box for saying
+        exactly what you meant.
+
+        `log` spreads a range of several decades evenly along the track; a
+        linear slider over 1..100000 px would spend its first half below 500."""
+        header = wx.BoxSizer(wx.HORIZONTAL)
+        caption = wx.StaticText(self, label=label)
+        caption.SetToolTip(tip)
+        entry = wx.SpinCtrl(self, min=low, max=high,
+                            size=self.FromDIP(wx.Size(82, -1)))
+        entry.SetToolTip(tip)
+        header.Add(caption, 1, wx.ALIGN_CENTER_VERTICAL)
+        header.Add(entry, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 6)
+        sizer.Add(header, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 4)
+
+        slider = wx.Slider(self, minValue=0, maxValue=1000 if log else high,
+                           style=wx.SL_HORIZONTAL)
+        slider.SetToolTip(tip)
+        sizer.Add(slider, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+
+        slider.range = (low, high)
+        slider.log = log
+        slider.entry = entry
+        entry.slider = slider
+
+        slider.Bind(wx.EVT_SLIDER, self._on_slider_moved)
+        entry.Bind(wx.EVT_SPINCTRL, self._on_entry_typed)
+        # A value typed without pressing the arrows only lands on focus loss.
+        entry.Bind(wx.EVT_KILL_FOCUS, self._on_entry_typed)
+        return slider
+
+    def _on_slider_moved(self, event):
+        """Slider dragged: carry the value into its box."""
+        slider = event.GetEventObject()
+        if not self._syncing:
+            self._syncing = True
+            slider.entry.SetValue(self._slider_value(slider))
+            self._syncing = False
+        self._on_change(event)
+
+    def _on_entry_typed(self, event):
+        """Box typed into or stepped: move the slider under it."""
+        event.Skip()
+        entry = event.GetEventObject()
+        if not self._syncing:
+            self._syncing = True
+            self._place_slider(entry.slider, entry.GetValue())
+            self._syncing = False
+        self._on_change(event)
+
+    @staticmethod
+    def _slider_value(slider):
+        """The slider's position as the value it stands for."""
+        if not slider.log:
+            return slider.GetValue()
+        low, high = slider.range
+        span = math.log10(high) - math.log10(max(1, low))
+        return int(round(10 ** (math.log10(max(1, low))
+                                + span * slider.GetValue() / 1000.0)))
+
+    @staticmethod
+    def _place_slider(slider, value):
+        """Move the slider to where `value` sits, without touching the box."""
+        low, high = slider.range
+        value = int(max(low, min(high, value)))
+        if slider.log:
+            span = math.log10(high) - math.log10(max(1, low))
+            position = 1000.0 * (math.log10(max(1, value))
+                                 - math.log10(max(1, low))) / span
+            slider.SetValue(int(round(position)))
+        else:
+            slider.SetValue(value)
+
+    def _set_slider(self, slider, value):
+        """Put `value` on both the slider and its box."""
+        low, high = slider.range
+        value = int(max(low, min(high, value)))
+        self._syncing = True
+        self._place_slider(slider, value)
+        slider.entry.SetValue(value)
+        self._syncing = False
+
+    def _build_readout(self, width):
+        box, sizer = self._box("Result", width)
+        self.text_background = wx.StaticText(self, label="")
+        self.text_sample = wx.StaticText(self, label="")
+        self.text_notice = wx.StaticText(self, label="")
+        self.text_notice.SetForegroundColour(wx.Colour(170, 110, 0))
+        for widget in (self.text_background, self.text_sample, self.text_notice):
+            sizer.Add(widget, 0, wx.ALL, 3)
+        return sizer
+
+    # ---------------------------------------------------------------- binding
+    def _sync_controls(self):
+        """Push the recipe into the widgets, and lock what the batch fixed."""
+        self.check_invert.SetValue(self.recipe.invert)
+        self._set_slider(self.spin_tophat, self.recipe.tophat)
+        self._set_slider(self.spin_median, self.recipe.median)
+        self._set_slider(self.spin_min_area, self.recipe.min_area)
+        self._set_slider(self.spin_hole_area, self.recipe.hole_area)
+        self._set_slider(self.spin_guard, self.recipe.guard)
+        self._set_slider(self.spin_border, self.recipe.border)
+        self.choice_method.SetSelection(THRESHOLD_METHODS.index(self.recipe.method))
+
+        # Everything but the threshold belongs to the batch.
+        editable = (not self.recipe_locked) or self.override
+        for widget in (self.spin_tophat, self.spin_median, self.spin_min_area,
+                       self.spin_hole_area, self.spin_guard,
+                       self.choice_method, self.check_invert):
+            widget.Enable(editable)
+
+        self._sync_slider()
+        self.Layout()
+
+    def _sync_slider(self):
+        """The slider and box are live only for Manual; otherwise they report
+        the level the method picked for this image."""
+        manual = self.recipe.method == "manual"
+        self.slider.Enable(manual)
+        self.threshold_entry.Enable(manual)
+
+        self._syncing = True
+        if manual:
+            self.slider.SetValue(int(round(self.recipe.manual_threshold * 1000)))
+            self.threshold_entry.SetValue(self.recipe.manual_threshold)
+            self.slider_label.SetLabel("Threshold")
+        else:
+            level = None if self._last_result is None else self._last_result["level"]
+            self.slider_label.SetLabel(
+                "Threshold  (%s, per image)" % THRESHOLD_LABELS[self.recipe.method])
+            if level is not None:
+                level = float(np.clip(level, 0, 1))
+                self.slider.SetValue(int(round(level * 1000)))
+                self.threshold_entry.SetValue(level)
+        self._syncing = False
+
+    def _collect(self):
+        """Read the widgets back into the recipe."""
+        self.recipe.invert = self.check_invert.GetValue()
+        # The box, not the slider: on a logarithmic track the position rounds,
+        # so a typed 813 would come back as 812.
+        for slider, field in ((self.spin_tophat, "tophat"),
+                              (self.spin_median, "median"),
+                              (self.spin_min_area, "min_area"),
+                              (self.spin_hole_area, "hole_area"),
+                              (self.spin_guard, "guard"),
+                              (self.spin_border, "border")):
+            setattr(self.recipe, field, slider.entry.GetValue())
+        self.recipe.method = THRESHOLD_METHODS[self.choice_method.GetSelection()]
 
     def _schedule_preview(self):
-        """Ask for a preview refresh, coalescing bursts of events into one."""
+        """Ask for a refresh, coalescing bursts of events into one."""
         self._preview_timer.Start(self.PREVIEW_DELAY_MS, oneShot=True)
 
+    def _on_change(self, event):
+        self._collect()
+        self._schedule_preview()
+
+    def _on_method(self, event):
+        self._collect()
+        self._sync_slider()
+        self.Layout()
+        self._schedule_preview()
+
     def _on_slider(self, event):
-        val = self.slider.GetValue()
-        self.current_threshold = float(val) / 1000.0
-        # The number follows the hand immediately; only the heavy part waits.
-        self.slider_label.SetLabel(f"Threshold (0–1): {self.current_threshold:.4f}")
+        """Follow the hand with the number; make the heavy part wait."""
+        self.recipe.manual_threshold = float(self.slider.GetValue()) / 1000.0
+        if not self._syncing:
+            self._syncing = True
+            self.threshold_entry.SetValue(self.recipe.manual_threshold)
+            self._syncing = False
         self._schedule_preview()
 
-    def _on_cleanup(self, event):
-        """Cleanup sizes changed: re-run the preview with the new values."""
-        self.min_area = self.spin_min_area.GetValue()
-        self.hole_area = self.spin_hole_area.GetValue()
-        self._schedule_preview()
-
-    def _on_radio(self, event):
-        self.sample_is_white = self.radio_white.GetValue()
-        self._update_previews()
-
-    def _on_reset_otsu(self, event):
-        self.current_threshold = self.otsu_thr
-        self.slider.SetValue(int(self.otsu_thr * 1000))
-        self.slider_label.SetLabel(f"Threshold (0–1): {self.current_threshold:.4f}")
-        self._update_previews()
+    def _on_override(self, event):
+        self.override = self.check_override.GetValue()
+        self._sync_controls()
 
     def _on_ok(self, event):
         self._preview_timer.Stop()
-        self.final_threshold = self.current_threshold
+        self._collect()
         self.confirmed = True
         self.EndModal(wx.ID_OK)
 
     def _on_cancel(self, event):
+        """Close without a mask, which skips the metric."""
         self._preview_timer.Stop()
         self.confirmed = False
         self.EndModal(wx.ID_CANCEL)
 
-    def _compute_masks(self, threshold_value):
-        """
-        Masks for the preview, from the SAME function that builds the result.
+    # ----------------------------------------------------------------- render
+    def _overlay(self, normalised, sample):
+        """The phase with the sample tinted: what stays grey gets measured.
 
-        This used to reimplement the watershed and the morphological cleanup
-        alongside build_background_mask, so what the preview showed and what
-        the metrics actually used could drift apart unnoticed.
-
-        On large images the masks are computed on a subsampled copy; see
-        preview_step. Shapes, proportions and the reported percentages hold;
-        single-pixel detail may not.
-        """
-        paso = self.preview_step
-        vista = self.image[::paso, ::paso] if paso > 1 else self.image
-        vista_norm = (self.img_normalized[::paso, ::paso] if paso > 1
-                      else self.img_normalized)
-
-        binary = (vista_norm > threshold_value).astype(np.uint8) * 255
-
-        # The cleanup sizes are areas, so they scale with the square of the
-        # step: "discard objects under 100 px" must mean the same thing on the
-        # reduced copy.
-        background_mask, _ = build_background_mask(
-            vista, threshold_value, self.sample_is_white,
-            min_area=max(1, self.min_area // (paso * paso)),
-            hole_area=max(1, self.hole_area // (paso * paso)),
-        )
-        return binary, ~background_mask, background_mask
+        A bare binary mask cannot tell you whether the right side was kept.
+        Drawn on the phase, picking the wrong region is immediately visible."""
+        grey = (np.clip(normalised, 0, 1) * 255).astype(np.uint8)
+        rgb = np.dstack([grey, grey, grey]).astype(np.uint16)
+        for channel, tint in enumerate(self.SAMPLE_TINT):
+            # Half the tint, half the phase, so texture shows through.
+            rgb[..., channel][sample] = (rgb[..., channel][sample] + tint) // 2
+        return rgb.astype(np.uint8)
 
     def _update_previews(self):
-        bin_u8, final_sample_mask, background_mask = self._compute_masks(self.current_threshold)
-        
-        # Create bitmaps with proper sizing
-        bmp_orig = numpy_to_wx_bitmap(self.img_u8, self.preview_size, self)
-        bmp_bin = numpy_to_wx_bitmap(bin_u8, self.preview_size, self)
-        bmp_sample = numpy_to_wx_bitmap(
-            final_sample_mask.astype(np.uint8) * 255, self.preview_size, self)
-        bmp_background = numpy_to_wx_bitmap(
-            background_mask.astype(np.uint8) * 255, self.preview_size, self)
-        
-        # Update bitmaps
-        self.bmp_original_image.SetBitmap(bmp_orig)
-        self.bmp_binary_preview.SetBitmap(bmp_bin)
-        self.bmp_sample_mask.SetBitmap(bmp_sample)
-        self.bmp_background_mask.SetBitmap(bmp_background)
-        
-        # Counts come from the preview, so they are scaled back up to the
-        # full image and flagged as approximate when it was subsampled.
-        bg_frac = float(np.mean(background_mask))
-        sample_frac = float(np.mean(final_sample_mask))
-        bg_pixels = int(round(bg_frac * self.image.size))
-        sample_pixels = int(round(sample_frac * self.image.size))
+        """Recompute the previews and the counts beside them."""
+        step = self.preview_step
+        previewImage = self.image[::step, ::step] if step > 1 else self.image
+        result = build_mask(previewImage, self.recipe.scaled(step))
+        self._last_result = result
 
-        nota = ("  (preview at 1/%d scale)" % self.preview_step
-                if self.preview_step > 1 else "")
-        self.info_text.SetLabel(
-            f"Background: {bg_pixels} px ({100*bg_frac:.1f}%)   "
-            f"Sample: {sample_pixels} px ({100*sample_frac:.1f}%){nota}")
-        
-        # Force layout update
+        self._bitmap.SetBitmap(numpy_to_wx_bitmap(
+            self._overlay(result["normalised"], result["sample"]),
+            self.preview_size, self))
+
+        backgroundFraction = float(np.mean(result["background"]))
+        sampleFraction = 1.0 - backgroundFraction
+        self.text_background.SetLabel(
+            "Background: %d px  (%.1f %%)"
+            % (round(backgroundFraction * self.image.size), 100 * backgroundFraction))
+        self.text_sample.SetLabel(
+            "Sample:     %d px  (%.1f %%)"
+            % (round(sampleFraction * self.image.size), 100 * sampleFraction))
+
+        notices = []
+        # The one case where "the background is the larger region" stops being
+        # safe, and the only one that needs the Invert box.
+        if result["ambiguous"]:
+            notices.append("the two regions are of similar size - check that "
+                           "the tinted one is the sample")
+        if step > 1:
+            notices.append("preview at 1/%d scale" % step)
+        lost = self.recipe.invisible_in_preview(step)
+        if lost:
+            notices.append("too fine to show here: " + ", ".join(lost))
+        if backgroundFraction < 0.01:
+            notices.append("almost nothing left as background")
+        elif sampleFraction < 0.0005:
+            notices.append("almost nothing found as sample")
+        self.text_notice.SetLabel("\n".join(notices))
+        self.text_notice.Wrap(self.FromDIP(290))
+
+        if self.recipe.method != "manual":
+            self._sync_slider()
         self.Layout()
 
     def get_result(self):
-        """
-        Show the dialog and return what the user chose.
-
-        Returns
-        -------
-        tuple
-            (threshold, sample_is_white, min_area, hole_area), or
-            (None, None, None, None) if cancelled. The cleanup sizes travel
-            with the threshold because they are now the user's choice, and the
-            caller must rebuild the mask with the same ones the preview used.
-        """
+        """Show the dialog; return the Recipe, or None if it was cancelled."""
         self.ShowModal()
-        if not self.confirmed:
-            return None, None, None, None
-        return (self.final_threshold, self.sample_is_white,
-                self.min_area, self.hole_area)
+        return self.recipe if self.confirmed else None
 
 
-def create_background_mask(image: np.ndarray, method: str = 'otsu',
-                           manual_threshold: float = 0.5, min_area: int = 100,
-                           hole_area: int = 50, parent=None):
-    """
-    Ask the user for a threshold and build the background mask from it.
+def create_background_mask(image: np.ndarray, recipe: Recipe = None,
+                           recipe_locked: bool = False, image_name: str = "",
+                           parent=None):
+    """Ask for a segmentation recipe and build the background mask from it.
 
-    Returns
-    -------
-    tuple
-        (background_mask, threshold_value), or (None, None) if cancelled.
-    """
+    Returns (background_mask, threshold, recipe); all three are None when the
+    dialog is cancelled. The recipe comes back so the batch can keep it."""
     image = np.array(image, dtype=float)
 
-    # Create wx.App if needed
-    app_created = False
+    createdApp = False
     app = wx.GetApp()
     if app is None:
         app = wx.App(False)
-        app_created = True
+        createdApp = True
 
-    dlg = WxThresholdDialog(parent, image, initial_threshold=manual_threshold,
-                            min_area=min_area, hole_area=hole_area)
-    threshold_value, sample_is_white, min_area, hole_area = dlg.get_result()
-    dlg.Destroy()
+    dialog = WxThresholdDialog(parent, image, recipe=recipe,
+                               recipe_locked=recipe_locked,
+                               image_name=image_name)
+    chosen = dialog.get_result()
+    dialog.Destroy()
 
-    if app_created:
+    if createdApp:
         try:
             app.Destroy()
         except Exception:
             pass
 
-    if threshold_value is None or sample_is_white is None:
-        return None, None
+    if chosen is None:
+        return None, None, None
 
-    # min_area and hole_area come back FROM the dialog: the user may have
-    # changed them, and the mask has to match the preview they approved.
-    return build_background_mask(image, threshold_value, sample_is_white,
-                                 min_area=min_area, hole_area=hole_area)
+    # Rebuilt at full resolution: the preview was subsampled.
+    result = build_mask(image, chosen)
+    level = result["level"]
+    if level is not None:
+        # So the table reports the level actually used, not the slider's.
+        chosen.manual_threshold = float(level)
+    return result["background"], level, chosen
