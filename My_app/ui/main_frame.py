@@ -2,7 +2,6 @@ import traceback
 
 import wx
 import wx.aui
-import wx.lib.dialogs
 import numpy as np
 from PIL import Image
 import pandas as pd
@@ -12,12 +11,13 @@ from detached_notebook import ImageNotebook
 from analysis.module1 import utilitiesRBPV as utRBPV
 from analysis.module1 import residual_background as rb
 from analysis.module3 import ground_truth_comparison as gtc
-from analysis.catalog import METRIC_MAP
+from analysis.catalog import METRIC_MAP, module_of
 from analysis.cache import AnalysisCache
 from ui.zone_selector import select_manual_zones
 from ui.threshold_dialog import create_background_mask
 from ui.legendre_viewer import show_legendre_reconstruction
 from ui.tsm_dialog import ask_tsm_threshold
+from ui.results_dialog import show_results_grid
 from ui import icons
 import subprocess
 import sys
@@ -100,6 +100,8 @@ class MainFrame(wx.Frame):
         self._skip_reason = None
         self._unwrap_warning_shown = False
         self._unwrap_choice = False
+        #: Set when a lone Unwrapped metric was declined; then it is skipped.
+        self._skip_unwrapped_metrics = False
         self._legendre_params_shown = False
         self._legendre_limit = None
         self._legendre_order = None
@@ -1221,48 +1223,72 @@ class MainFrame(wx.Frame):
         # Default case
         return 'per_image'
 
-    # Each RMS variant drags its matching mean along (see _RMS_MEAN_PAIRS below)
-    _RMS_MEAN_PAIRS = (
+    #: Metrics that cannot be read alone, each dragging its companion along.
+    # RMS^2 = mean^2 + STD^2, so the mean is what RMS adds over STD. And a
+    # Legendre fit smooths across any 2*pi cliff in the region, so the number
+    # means nothing without knowing how much of the region was wrapped: the
+    # jump density rides with it rather than the fit refusing to report.
+    _COMPANION_METRICS = (
         ('rms_background', 'mean_background', 'Mean - Background'),
         ('rms_unwrapped', 'mean_unwrapped', 'Mean - Unwrapped Background'),
         ('rms_zones', 'mean_zones', 'Mean - Background Zones'),
+        ('legendre_background', 'jumps_background', 'Phase jumps - Background'),
+        ('legendre_unwrapped', 'jumps_unwrapped',
+         'Phase jumps - Unwrapped Background'),
+        ('legendre_zones', 'jumps_zones', 'Phase jumps - Background Zones'),
     )
 
-    def _ask_unwrap_once(self, metrics_dict=None):
-        """Ask ONCE per batch whether phase unwrapping may be applied.
+    def _ask_unwrap_for_lone_metric(self, metric_label):
+        """Ask before unwrapping when that metric is the entire run.
 
-        Declining means two different things, so the button has to say which
-        one applies: an Unwrapped variant is skipped, while a Zones metric is
-        still measured, on the wrapped phase, inside the same zones."""
+        Declining then leaves nothing to measure, so the button says Skip. With
+        anything else selected the run produces its other columns regardless,
+        and the question would only offer to drop what was just asked for."""
+        message = ("%s is measured on unwrapped phase.\n\n"
+                   "Unwrapping removes 2π discontinuities, but it can "
+                   "jeopardize phase compensation and introduce errors of "
+                   "its own.\n\n"
+                   "It is the only metric selected, so declining leaves "
+                   "nothing to measure." % metric_label)
+
+        dialog = wx.MessageDialog(
+            self, message, "Apply phase unwrapping?",
+            style=wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION
+        )
+        # Named after what they do, not Yes/No; also keeps them in English on a
+        # Windows whose own Yes/No is translated.
+        dialog.SetYesNoLabels("Unwrap", "Skip")
+        answer = dialog.ShowModal()
+        dialog.Destroy()
+        return answer == wx.ID_YES
+
+    def _ask_unwrap_once(self):
+        """Ask ONCE per run whether the ZONE metrics may be unwrapped.
+
+        Only the zone metrics, because they are the only ones whose name does
+        not already settle it: a metric called 'Unwrapped' was asked for by
+        being selected, and asking again only offered to skip what the operator
+        had just chosen. A zone metric is measured either way -- on unwrapped
+        or on wrapped phase, inside the same rectangles -- so there the choice
+        is real and nothing is skipped by declining."""
         if self._unwrap_warning_shown:
             return self._unwrap_choice
 
-        selected = list(metrics_dict or ())
-        hasZones = any('zones' in candidateId for candidateId in selected)
-        hasUnwrapped = any('unwrapped' in candidateId and 'zones' not in candidateId
-                           for candidateId in selected)
-
-        message = ("Some of the selected metrics use phase unwrapping.\n\n"
+        message = ("The zone metrics can be measured on unwrapped phase.\n\n"
                    "Unwrapping removes 2π discontinuities, but it can "
                    "jeopardize phase compensation and introduce errors of "
-                   "its own.")
-        if hasZones and hasUnwrapped:
-            # The only case one label cannot carry, so it is said in a line.
-            message += ("\n\nDeclining leaves the zone metrics on the wrapped "
-                        "phase and skips the Unwrapped variants.")
-            noLabel = "Do not unwrap"
-        elif hasZones:
-            noLabel = "Do not unwrap"
-        else:
-            noLabel = "Skip"
+                   "its own.\n\n"
+                   "Declining measures the same zones on the wrapped phase. "
+                   "Nothing is skipped either way, and the Unwrapped variants "
+                   "are not affected by this answer.")
 
         dialog = wx.MessageDialog(
-            self, message, "Apply Phase Unwrapping?",
+            self, message, "Unwrap the zone metrics?",
             style=wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION
         )
         # Named after what they do, not Yes/No. As a side effect the two
         # labels stay in English on a Windows whose own Yes/No is translated.
-        dialog.SetYesNoLabels("Unwrap", noLabel)
+        dialog.SetYesNoLabels("Unwrap", "Do not unwrap")
         answer = dialog.ShowModal()
         dialog.Destroy()
 
@@ -1273,30 +1299,37 @@ class MainFrame(wx.Frame):
     def _calculate_multiple_metrics(self, metrics_dict, image_indices):
         # Every selected metric over every selected image, one threshold each.
 
-        # RMS^2 = mean^2 + STD^2, so the mean rides along with RMS.
+        # What the operator actually ticked, before RMS drags its mean in: a
+        # companion added here must not turn a lone metric into a group.
+        chosenMetrics = list(metrics_dict)
+
         metrics_dict = dict(metrics_dict)
-        for rmsMetricId, meanMetricId, meanLabel in self._RMS_MEAN_PAIRS:
-            if rmsMetricId in metrics_dict and meanMetricId not in metrics_dict:
-                metrics_dict[meanMetricId] = meanLabel
+        for metricId, companionId, companionLabel in self._COMPANION_METRICS:
+            if metricId in metrics_dict and companionId not in metrics_dict:
+                metrics_dict[companionId] = companionLabel
 
         # Verify ground-truth if needed
         if not self._ensure_ground_truth_loaded(metrics_dict):
             return
         self._unwrap_warning_shown = False
-        # Asked once per RUN, not once per session: the point of the dialog is
-        # that the operator chooses the level, and keeping the answer across
-        # runs meant the same image could never be measured at a second one.
-        self._cache.tsm_thresholds.clear()
+        self._skip_unwrapped_metrics = False
+        # Everything the operator was asked last time is asked again: the masks
+        # and the recipe as well as the TSM levels. Re-running the metrics is
+        # how a segmentation or a threshold gets corrected, and the caches made
+        # the first answer final for the rest of the session.
+        self._cache.start_run()
 
-        # One question for the whole batch, asked up front.
-        needsUnwrap = any(
-            'zones' in candidateId or self.metric_map.get(candidateId, (None, None, False))[2]
-            for candidateId in metrics_dict
-        )
-        if needsUnwrap:
-            # Asked here, where the whole selection is known: the wording of
-            # the decline button depends on what was selected.
-            self._ask_unwrap_once(metrics_dict)
+        # Asked up front, where the whole selection is known. The zone metrics
+        # ask whenever they are present; an Unwrapped variant asks only when it
+        # is the whole run, because only then does declining leave nothing to
+        # measure. See _ask_unwrap_once and _ask_unwrap_for_lone_metric.
+        if any('zones' in candidateId for candidateId in metrics_dict):
+            self._ask_unwrap_once()
+        elif len(chosenMetrics) == 1 and self.metric_map.get(
+                chosenMetrics[0], (None, None, False))[2]:
+            loneMetric = chosenMetrics[0]
+            if not self._ask_unwrap_for_lone_metric(metrics_dict[loneMetric]):
+                self._skip_unwrapped_metrics = True
         self._legendre_params_shown = False
         # Detect if there are zone metrics and ask for mode
         hasZoneMetrics = any('zones' in candidateId for candidateId in metrics_dict.keys())
@@ -1341,7 +1374,10 @@ class MainFrame(wx.Frame):
         )
         
         currentOperation = 0
-        resultLines = []
+        # The summary is a matrix: images down, metrics across. Filled as
+        # (image, label) -> (cell text, kind, why it is not a number).
+        summaryImages = []
+        summaryCells = {}
         cancelled = False
         
         try:
@@ -1355,11 +1391,13 @@ class MainFrame(wx.Frame):
                 
                 if pilImage is None:
                     currentOperation += len(metrics_dict)
+                    summaryImages.append(imageName)
+                    for metricLabel in metrics_dict.values():
+                        summaryCells[(imageName, metricLabel)] = (
+                            "--", 'skipped', "the tab holds no image data")
                     continue
                 
-                resultLines.append(f"\n{'='*50}")
-                resultLines.append(f"Image: {imageName}")
-                resultLines.append(f"{'='*50}")
+                summaryImages.append(imageName)
                 
                 # 1️⃣ The phase, computed once at load time. Never re-derived
                 # from the picture on screen: that picture is rescaled for
@@ -1385,10 +1423,6 @@ class MainFrame(wx.Frame):
                     )
                     if not keepGoing:
                         cancelled = True
-                        resultLines.append(
-                            "\n*** Cancelled by the user. Everything above was "
-                            "already written to the table. ***"
-                        )
                         break
                     
                     try:
@@ -1401,17 +1435,26 @@ class MainFrame(wx.Frame):
                         
                         if value is None:
                             reason = self._skip_reason or "skipped"
-                            resultLines.append(f" ⊘ {metricLabel}: {reason}")
-                        elif not np.isfinite(value):
-                            resultLines.append(
-                                f" ⊘ {metricLabel}: undefined (NaN) — the estimator "
-                                f"does not apply to this data"
-                            )
+                            summaryCells[(imageName, metricLabel)] = (
+                                "--", 'skipped', reason)
+                        elif np.isinf(value):
+                            # A value, not a failure: PSNR runs to infinity when
+                            # the MSE is zero. Reported without a note, since
+                            # what it means belongs to whoever reads the table.
+                            summaryCells[(imageName, metricLabel)] = (
+                                "inf", 'value', "")
+                        elif np.isnan(value):
+                            summaryCells[(imageName, metricLabel)] = (
+                                "NaN", 'nan',
+                                "undefined (NaN): the estimator does not apply "
+                                "to this data")
                         else:
-                            resultLines.append(f" ✓ {metricLabel}: {value:.6f}")
+                            summaryCells[(imageName, metricLabel)] = (
+                                f"{value:.6f}", 'value', "")
                             
                     except Exception as error:
-                        resultLines.append(f" ✗ {metricLabel}: ERROR - {str(error)}")
+                        summaryCells[(imageName, metricLabel)] = (
+                            "error", 'error', f"{type(error).__name__}: {error}")
                     
                     currentOperation += 1
             
@@ -1421,20 +1464,10 @@ class MainFrame(wx.Frame):
         finally:
             progressDialog.Destroy()
         
-        # Show summary
-        summaryText = "\n".join(resultLines)
-        
-        try:
-            dialog = wx.lib.dialogs.ScrolledMessageDialog(
-                self,
-                summaryText,
-                "Metrics Calculation Cancelled" if cancelled else "Metrics Calculation Complete",
-                size=self.FromDIP(wx.Size(600, 400))
-            )
-            dialog.ShowModal()
-            dialog.Destroy()
-        except:
-            wx.MessageBox(summaryText, "Metrics Calculation Complete", wx.ICON_INFORMATION)
+        # One row per image, one column per metric: the same shape as the
+        # results table, so two images can be compared without scrolling.
+        show_results_grid(self, summaryImages, list(metrics_dict.values()),
+                          summaryCells, cancelled)
         
         self._update_status_counts()
         self.SetStatusText(
@@ -1453,11 +1486,9 @@ class MainFrame(wx.Frame):
         for metricId in metrics_dict.keys():
             if 'zones' in metricId:
                 zoneMetrics.append(metricId)
-            elif metricId.startswith(('mmm_', 'gradient_', 'tsm_',
-                                    'laplacian_', 'spatial_freq_', 'global_entropy',
-                                    'sharpness_', 'fwhm_global')):
+            elif module_of(metricId) == 2:
                 module2Metrics.append(metricId)
-            elif metricId.startswith(('ssim', 'mse', 'psnr')):
+            elif module_of(metricId) == 3:
                 module3Metrics.append(metricId)
             else:
                 module1Metrics.append(metricId)
@@ -1489,7 +1520,9 @@ class MainFrame(wx.Frame):
                 if backgroundMask is not None:
                     maskCache[False] = (backgroundMask, threshold, processedSample)
 
-            if needsUnwrapped and self._ask_unwrap_once():
+            # An Unwrapped variant is a request to unwrap, so it unwraps --
+            # unless it was the whole run and the operator declined.
+            if needsUnwrapped and not self._skip_unwrapped_metrics:
                 try:
                     backgroundMask, threshold, unwrappedSample = self._get_or_create_background_mask(
                         image_name, sample, needs_unwrap=True
@@ -1604,8 +1637,11 @@ class MainFrame(wx.Frame):
         
         metricFunction, tableColumn, needsUnwrap = self.metric_map[metric_id]
 
-        if needsUnwrap and not self._ask_unwrap_once():
-            return self._skip("phase unwrapping was declined for this batch")
+        # Only ever set when this metric was the whole run and the operator
+        # declined: with other metrics selected an Unwrapped variant is not
+        # gated at all, since selecting it IS the request to unwrap.
+        if needsUnwrap and self._skip_unwrapped_metrics:
+            return self._skip("phase unwrapping was declined")
         
         # SPECIAL HANDLING FOR LEGENDRE METRICS
         if 'legendre' in metric_id.lower():
@@ -1743,7 +1779,7 @@ class MainFrame(wx.Frame):
             return meanValue
         
         # MODULE 3: Ground-truth metrics (need ground-truth loaded)
-        if metric_id.startswith(('ssim', 'mse', 'psnr')):
+        if module_of(metric_id) == 3:
             if not hasattr(self, 'ground_truth_data') or self.ground_truth_data is None:
                 return self._skip("no ground-truth image loaded")
             
@@ -1758,9 +1794,7 @@ class MainFrame(wx.Frame):
                 return self._skip(f"{type(error).__name__}: {error}")
         
         # MODULE 2: Global metrics (NO need mask)
-        elif metric_id.startswith(('mmm_', 'gradient_', 'tsm_', 
-                                'laplacian_', 'spatial_freq_', 'global_entropy',
-                                'sharpness_', 'fwhm_global')):
+        elif module_of(metric_id) == 2:
             if needsUnwrap:
                 try:
                     processedSample = self._get_unwrapped_sample(image_name, sample)
@@ -1770,6 +1804,7 @@ class MainFrame(wx.Frame):
                 processedSample = sample
             
             parameters = inspect.signature(metricFunction).parameters
+            tsmThreshold = None
             
             try:
                 if metric_id.startswith('tsm_'):
@@ -1790,6 +1825,13 @@ class MainFrame(wx.Frame):
                     value = value
                 
                 self.update_table_with_zones(image_name, tableColumn, value)
+                if tsmThreshold is not None:
+                    # The level is half of the measurement: the percentage
+                    # cannot be reproduced without the threshold it came from,
+                    # and the operator chooses that level per image.
+                    self.update_table_with_zones(
+                        image_name, self._threshold_column(tableColumn),
+                        tsmThreshold)
                 return value
             except Exception as error:
                 return self._skip(f"{type(error).__name__}: {error}")
@@ -1809,6 +1851,13 @@ class MainFrame(wx.Frame):
             except Exception as error:
                 return self._skip(f"{type(error).__name__}: {error}")
 
+
+    @staticmethod
+    def _threshold_column(metric_column):
+        """The column holding the level a thresholded metric was measured at."""
+        # 'TSM_Global [%]' -> 'TSM_Global Threshold': named after the metric, so
+        # the two TSM variants keep their own level, which is what they get.
+        return metric_column.split(' [')[0] + " Threshold"
 
     def _sample_fingerprint(self, sample):
         """Cheap fingerprint telling whether an image's phase data changed."""
@@ -1867,14 +1916,21 @@ class MainFrame(wx.Frame):
             # The recipe comes from the batch when one has been settled; only
             # the threshold is tuned per image, so the rows stay comparable.
             batchRecipe = self._cache.segmentation_recipe
+            # With no batch recipe yet, the previous run's is offered as the
+            # starting point: this image is free to change it, and whatever it
+            # settles on becomes the recipe for the rest of the run.
+            startingRecipe = (batchRecipe if batchRecipe is not None
+                              else self._cache.last_recipe)
             backgroundMask, threshold, recipe = create_background_mask(
-                sample, recipe=batchRecipe, recipe_locked=batchRecipe is not None,
+                sample, recipe=startingRecipe,
+                recipe_locked=batchRecipe is not None,
                 image_name=image_name, parent=self)
             if backgroundMask is None:
                 # Segmentation dialog cancelled: nothing to cache, skip it.
                 return None, None, None
             if batchRecipe is None:
                 self._cache.segmentation_recipe = recipe
+                self._cache.last_recipe = recipe
             cached = {
                 'fingerprint': fingerprint,
                 'mask': backgroundMask,

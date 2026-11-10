@@ -16,7 +16,11 @@ class AnalysisCache:
         self.tsm_thresholds = {}
         #: The Module I segmentation recipe, settled on the first image and
         #: reused for the rest so that every row of the table is comparable.
+        #: Dropped at the start of every run, so a second run can be segmented
+        #: differently; `last_recipe` survives it only as the dialog's starting
+        #: point, so re-running does not mean dialling every filter again.
         self.segmentation_recipe = None
+        self.last_recipe = None
 
     # ------------------------------------------------------------------ zones
     def reset_zones(self, shared=False):
@@ -53,8 +57,21 @@ class AnalysisCache:
     def clear(self):
         """Drop every cached result."""
         self.segmentation_recipe = None
+        self.last_recipe = None
         self.masks.clear()
         self.unwrapped.clear()
         self.zones.clear()
         self.tsm_thresholds.clear()
         self.shared_zones = None
+
+    # ------------------------------------------------------------------ runs
+    def start_run(self):
+        """Forget the answers the operator gave in the previous run.
+
+        The masks and the recipe go because re-running is how a segmentation is
+        corrected, and the TSM levels because the dialog exists for the
+        operator to choose them. What the data itself determines -- unwrapped
+        copies, which are the same whoever asks -- stays."""
+        self.masks.clear()
+        self.segmentation_recipe = None
+        self.tsm_thresholds.clear()

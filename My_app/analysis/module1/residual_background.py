@@ -121,8 +121,14 @@ def entropy_background(img: np.ndarray, mask: Optional[np.ndarray] = None,
     return _shannon_entropy(backgroundValues, bins=bins, base=base)
 
 
-def _looks_wrapped(phase, mask=None, fraction=5e-4):
-    """True when 2*pi cliffs cross the region: the low pass would smear them."""
+def wrap_jump_density(phase, mask=None):
+    """Percentage of adjacent pixel pairs that cross a 2*pi cliff.
+
+    Counted INSIDE the region only, so the hard edge of the sample is not taken
+    for a wrap. A compensated background reads about zero; anything above a
+    fraction of a percent means fringes are still in there, and it is the
+    quantity to read next to a Legendre fit, which smooths across such cliffs."""
+    phase = np.asarray(phase, dtype=np.float64)
     horizontalJump = np.abs(np.diff(phase, axis=1)) > np.pi
     verticalJump = np.abs(np.diff(phase, axis=0)) > np.pi
 
@@ -132,22 +138,36 @@ def _looks_wrapped(phase, mask=None, fraction=5e-4):
         # Only pairs INSIDE the background, so a hard sample edge is not a wrap.
         horizontalPair = mask[:, 1:] & mask[:, :-1]
         verticalPair = mask[1:, :] & mask[:-1, :]
-        horizontalJump &= horizontalPair
-        verticalJump &= verticalPair
+        horizontalJump = horizontalJump & horizontalPair
+        verticalJump = verticalJump & verticalPair
         pairCount = int(np.count_nonzero(horizontalPair)
                         + np.count_nonzero(verticalPair))
 
     if pairCount == 0:
-        return False
+        return 0.0
 
     jumpCount = int(np.count_nonzero(horizontalJump) + np.count_nonzero(verticalJump))
-    return jumpCount / pairCount > fraction
+    return 100.0 * jumpCount / pairCount
+
+
+def _looks_wrapped(phase, mask=None, fraction=5e-4):
+    """True when 2*pi cliffs cross the region: the low pass would smear them."""
+    # Kept for callers that ask to abstain; the density itself is the metric.
+    return wrap_jump_density(phase, mask) / 100.0 > fraction
 
 
 def legendre_background(phase, mask=None, manual=False, num_zones=2,
                         limit=64, order_max=5, NoPistonCompensation=True,
-                        UsePCA=False, zones=None, show_reconstruction=None):
-    """Legendre coefficients of the background: inside the mask, or per zone."""
+                        UsePCA=False, zones=None, show_reconstruction=None,
+                        skip_wrapped=False):
+    """Legendre coefficients of the background: inside the mask, or per zone.
+
+    The fit begins with a low pass, and a low pass averages across a 2*pi cliff
+    as if it were real, so on a wrapped region the coefficients describe a
+    surface that is not there. `skip_wrapped=True` returns NaN in that case
+    instead; by default the fit is returned as it stands and the caller is
+    expected to report wrap_jump_density() beside it, so the reading can be
+    judged rather than withheld."""
     if manual:
         # The caller selects the zones: no dialog here, so no wx in this layer.
         if not zones:
@@ -158,8 +178,9 @@ def legendre_background(phase, mask=None, manual=False, num_zones=2,
 
         for zoneNumber, (xmin, xmax, ymin, ymax) in enumerate(zones, start=1):
             zoneField = phase[ymin:ymax, xmin:xmax]
-            # A zone with wrapping in it cannot be fitted: it poisons the mean too.
-            if _looks_wrapped(zoneField):
+            # Wrapping in a zone poisons the mean of the coefficients too, so
+            # the abstention is per zone when it is asked for at all.
+            if skip_wrapped and _looks_wrapped(zoneField):
                 coefficients = np.full(order_max, np.nan)
             else:
                 coefficients = _process_legendre_zone(zoneField, limit, order_max,
@@ -170,8 +191,7 @@ def legendre_background(phase, mask=None, manual=False, num_zones=2,
 
         return np.mean(zoneCoefficients, axis=0), zoneStats
 
-    # The low pass averages across a 2*pi cliff, so a wrapped map has no fit.
-    if _looks_wrapped(phase, mask):
+    if skip_wrapped and _looks_wrapped(phase, mask):
         return np.full(order_max, np.nan)
 
     coefficients = _process_legendre_zone(phase, limit, order_max,
@@ -196,13 +216,13 @@ def legendre_background(phase, mask=None, manual=False, num_zones=2,
     return coefficients
 
 
-def _mask_on_grid(mask, grid_size):
+def _mask_on_grid(mask, grid_rows, grid_cols):
     """The background mask sampled onto the coarse grid the low-pass step leaves."""
     # Nearest neighbour at each block centre: no interpolation, so it stays boolean.
-    rowIndex = np.minimum(((np.arange(grid_size) + 0.5) * mask.shape[0]
-                           / grid_size).astype(int), mask.shape[0] - 1)
-    colIndex = np.minimum(((np.arange(grid_size) + 0.5) * mask.shape[1]
-                           / grid_size).astype(int), mask.shape[1] - 1)
+    rowIndex = np.minimum(((np.arange(grid_rows) + 0.5) * mask.shape[0]
+                           / grid_rows).astype(int), mask.shape[0] - 1)
+    colIndex = np.minimum(((np.arange(grid_cols) + 0.5) * mask.shape[1]
+                           / grid_cols).astype(int), mask.shape[1] - 1)
     return mask[np.ix_(rowIndex, colIndex)]
 
 
@@ -229,10 +249,16 @@ def _process_legendre_zone(zone_phase, limit, order_max, UsePCA, mask=None):
         smoothPhase = (leftVectors[:, :1] @ np.diag(singularValues[:1])
                        @ rightVectors[:1, :])
 
-    gridSize = smoothPhase.shape[0]
-    gridCoords = np.linspace(-1, 1 - 2 / gridSize, gridSize)
-    gridX, gridY = np.meshgrid(gridCoords, gridCoords)
-    cellArea = (2 / gridSize) ** 2
+    # The low pass leaves a grid of its own shape, and that shape is square only
+    # where the crop reached the limit on BOTH axes. A region narrower than
+    # 2*limit keeps that side's length, so the grid is rectangular -- and a
+    # square grid then held one row per column, which could not even be formed:
+    # a 42x36 zone raised "shapes (1764,5) (1512,1)".
+    gridRows, gridCols = smoothPhase.shape
+    rowCoords = np.linspace(-1, 1 - 2 / gridRows, gridRows)
+    colCoords = np.linspace(-1, 1 - 2 / gridCols, gridCols)
+    gridX, gridY = np.meshgrid(colCoords, rowCoords)
+    cellArea = (2 / gridRows) * (2 / gridCols)
     orders = np.arange(1, order_max + 1)
 
     polynomials = square_legendre_fitting(orders, gridX, gridY)
@@ -249,7 +275,7 @@ def _process_legendre_zone(zone_phase, limit, order_max, UsePCA, mask=None):
         return np.sum(basis * phaseVector, axis=0) * cellArea
 
     # Over a subset the basis loses its orthonormality: project and you get noise.
-    backgroundPixels = _mask_on_grid(mask, gridSize).reshape(-1)
+    backgroundPixels = _mask_on_grid(mask, gridRows, gridCols).reshape(-1)
     if int(np.count_nonzero(backgroundPixels)) < termCount:
         return np.full(termCount, np.nan)
     coefficients, *_ = np.linalg.lstsq(basis[backgroundPixels],
@@ -261,10 +287,12 @@ def _optimize_piston(phase, coeffs, limit, order_max, UsePCA, mask=None):
     """Pick the piston coefficient that leaves the least residual variance."""
     smoothPhase = _low_pass_phase(phase, limit)
 
-    gridSize = smoothPhase.shape[0]
-    gridCoords = np.linspace(-1, 1 - 2 / gridSize, gridSize)
-    gridX, gridY = np.meshgrid(gridCoords, gridCoords)
-    cellArea = (2 / gridSize) ** 2
+    # Rectangular-aware, like the fit it judges; see _process_legendre_zone.
+    gridRows, gridCols = smoothPhase.shape
+    rowCoords = np.linspace(-1, 1 - 2 / gridRows, gridRows)
+    colCoords = np.linspace(-1, 1 - 2 / gridCols, gridCols)
+    gridX, gridY = np.meshgrid(colCoords, rowCoords)
+    cellArea = (2 / gridRows) * (2 / gridCols)
     orders = np.arange(1, order_max + 1)
 
     polynomials = square_legendre_fitting(orders, gridX, gridY)
@@ -276,7 +304,8 @@ def _optimize_piston(phase, coeffs, limit, order_max, UsePCA, mask=None):
     basisNorms = np.sum(basis ** 2, axis=0) * cellArea
 
     # The residual is judged where the background is, like the fit itself.
-    backgroundPixels = None if mask is None else _mask_on_grid(mask, gridSize)
+    backgroundPixels = (None if mask is None
+                        else _mask_on_grid(mask, gridRows, gridCols))
 
     # Sweep the piston over a full turn in steps of pi/6.
     candidatePistons = np.arange(-np.pi, np.pi + np.pi / 6, np.pi / 6)
