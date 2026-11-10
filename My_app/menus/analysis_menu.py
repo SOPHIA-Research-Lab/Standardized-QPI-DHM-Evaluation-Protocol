@@ -60,6 +60,11 @@ def _show_module1_dialog(parent_frame):
         'entropy_background': {'label': 'Entropy - Background'},
         'entropy_zones': {'label': 'Entropy - Background Zones'},
         
+        # Phase jumps: the wrapping still present in the measured region
+        'jumps_unwrapped': {'label': 'Phase jumps - Unwrapped Background'},
+        'jumps_background': {'label': 'Phase jumps - Background'},
+        'jumps_zones': {'label': 'Phase jumps - Background Zones'},
+
         # Legendre metrics
         'legendre_unwrapped': {'label': 'Legendre - Unwrapped Background'},
         'legendre_background': {'label': 'Legendre - Background'},

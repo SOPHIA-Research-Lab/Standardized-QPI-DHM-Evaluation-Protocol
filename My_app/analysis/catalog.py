@@ -41,6 +41,12 @@ METRIC_MAP = {
     'entropy_background': (rb.entropy_background, 'Entropy_B [bits]', False),
     'entropy_zones': (rb.entropy_background, 'Entropy_Zones [bits]', False),
 
+    # Phase jumps: how much of the region still crosses a 2*pi cliff. Zero on
+    # a compensated background; read beside Legendre, which smooths across them.
+    'jumps_unwrapped': (rb.wrap_jump_density, 'Jumps_U_B [%]', True),
+    'jumps_background': (rb.wrap_jump_density, 'Jumps_B [%]', False),
+    'jumps_zones': (rb.wrap_jump_density, 'Jumps_Zones [%]', False),
+
     # Legendre metrics 
     'legendre_background': (rb.legendre_background, 'Legendre-B [rad]', False),
     'legendre_unwrapped': (rb.legendre_background, 'Legendre-U_B [rad]', True),
@@ -98,3 +104,23 @@ METRIC_MAP = {
     # PSNR
     'psnr': (gtc.calculate_psnr, 'PSNR', False),
 }
+
+
+#: Which protocol module each metric function lives in.
+# The module is read from where the function is defined, not guessed from the
+# id: the GUI used to match id prefixes, 'tilt_global' matched none of them, and
+# the two GPG metrics were therefore handled as background metrics -- they asked
+# for a segmentation they do not use, and were then called as f(phase, mask).
+_MODULE_BY_PACKAGE = {
+    'analysis.module1.residual_background': 1,
+    'analysis.module2.global_phase': 2,
+    'analysis.module3.ground_truth_comparison': 3,
+}
+
+
+def module_of(metric_id):
+    """The module number a metric belongs to, or None if it is not catalogued."""
+    entry = METRIC_MAP.get(metric_id)
+    if entry is None:
+        return None
+    return _MODULE_BY_PACKAGE.get(getattr(entry[0], '__module__', None))

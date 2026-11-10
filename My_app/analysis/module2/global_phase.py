@@ -159,9 +159,40 @@ def normalised_phase(phase, use_unwrap=False):
     return (normalised - phaseMin) / (phaseMax - phaseMin)
 
 
+def _furthest_below_chord(smoothed, lo, hi):
+    """The bin that lies furthest BELOW the chord joining two bins."""
+    # The cross product of the chord with the offset: lo < hi, so the run is
+    # positive and the sign is the same whichever way the chord slopes.
+    if hi <= lo:
+        return lo
+
+    binIndices = np.arange(lo, hi + 1, dtype=float)
+    binHeights = smoothed[lo:hi + 1]
+    chordX, chordY = float(lo), float(smoothed[lo])
+    chordRun, chordRise = float(hi) - chordX, float(smoothed[hi]) - chordY
+    chordLength = np.hypot(chordRun, chordRise)
+    if chordLength == 0:
+        return (lo + hi) // 2
+
+    distanceToChord = (((binIndices - chordX) * chordRise
+                        - (binHeights - chordY) * chordRun) / chordLength)
+    return int(lo + np.argmax(distanceToChord))
+
+
 def histogram_valley(phi_nor, bins=256, smooth=5):
-    """Suggest the TSM threshold: the histogram valley between the two peaks."""
-    # The dip between the humps: the bin furthest BELOW the chord joining them.
+    """Suggest the TSM threshold from the shape of the phase histogram.
+
+    Always the bin furthest below a chord; what the chord joins is what 'mode'
+    reports:
+      'valley'   two prominent humps: the chord joins them, and the answer is
+                 the dip between the two;
+      'triangle' one hump: the chord runs from it to the far end of the
+                 occupied range, which is the classic triangle construction.
+                 A single hump with a tail that reaches the edge is the usual
+                 QPI case -- background hump, sample tail -- and there the mean
+                 lands inside the hump itself;
+      'flat'     no hump at all: the mean is all that is left to offer.
+    """
     from scipy.signal import find_peaks
 
     finiteValues = np.asarray(phi_nor, dtype=np.float64).ravel()
@@ -172,48 +203,53 @@ def histogram_valley(phi_nor, bins=256, smooth=5):
 
     smoothed = counts.astype(float)
     if smooth > 1:
-        smoothed = np.convolve(smoothed, np.ones(smooth) / smooth, mode='same')
+        # Padded with the edge value, NOT with zeros. np.convolve's 'same' pads
+        # with zeros, which hollows out the first and last bins and so creates a
+        # local maximum a couple of bins in; a histogram with one hump and a
+        # tail that reaches the edge then passed as bimodal, on a peak that the
+        # smoothing itself had invented.
+        leftPad = smooth // 2
+        rightPad = smooth - 1 - leftPad
+        padded = np.pad(smoothed, (leftPad, rightPad), mode='edge')
+        smoothed = np.convolve(padded, np.ones(smooth) / smooth, mode='valid')
 
     result = {'centres': centres, 'counts': counts, 'smoothed': smoothed}
 
-    if smoothed.max() <= 0:
-        result.update({'threshold': 0.5, 'peak_lo': 0, 'peak_hi': 0,
-                       'valley': bins // 2, 'ok': False})
+    def flat(level):
+        result.update({'threshold': float(level), 'chord_lo': 0, 'chord_hi': 0,
+                       'valley': bins // 2, 'mode': 'flat', 'ok': False})
         return result
+
+    if smoothed.max() <= 0:
+        return flat(0.5)
 
     # Picked by PROMINENCE: by height, a wide hump found its own shoulder.
     peaks, peakProperties = find_peaks(smoothed,
                                        prominence=0.05 * smoothed.max(),
                                        distance=max(3, bins // 20))
 
-    if len(peaks) < 2:
-        result.update({'threshold': float(finiteValues.mean()),
-                       'peak_lo': int(peaks[0]) if len(peaks) else 0,
-                       'peak_hi': int(peaks[0]) if len(peaks) else 0,
-                       'valley': bins // 2, 'ok': False})
-        return result
-
-    # The two most prominent ones, in histogram order.
-    topTwoPeaks = peaks[np.argsort(peakProperties['prominences'])[-2:]]
-    leftPeak, rightPeak = int(min(topTwoPeaks)), int(max(topTwoPeaks))
-
-    binIndices = np.arange(leftPeak, rightPeak + 1, dtype=float)
-    binHeights = smoothed[leftPeak:rightPeak + 1]
-    chordX, chordY = float(leftPeak), float(smoothed[leftPeak])
-    chordRun, chordRise = float(rightPeak) - chordX, float(smoothed[rightPeak]) - chordY
-    chordLength = np.hypot(chordRun, chordRise)
-
-    if chordLength == 0:
-        valleyIndex = (leftPeak + rightPeak) // 2
+    if len(peaks) >= 2:
+        # The two most prominent ones, in histogram order.
+        topTwoPeaks = peaks[np.argsort(peakProperties['prominences'])[-2:]]
+        chordLo, chordHi = int(min(topTwoPeaks)), int(max(topTwoPeaks))
+        mode = 'valley'
+    elif len(peaks) == 1:
+        occupied = np.flatnonzero(smoothed > 0)
+        firstBin, lastBin = int(occupied[0]), int(occupied[-1])
+        onlyPeak = int(peaks[0])
+        # The longer side of the hump: the tail is the side worth spanning.
+        chordLo, chordHi = ((onlyPeak, lastBin)
+                            if lastBin - onlyPeak >= onlyPeak - firstBin
+                            else (firstBin, onlyPeak))
+        mode = 'triangle'
     else:
-        # Positive where the histogram runs BELOW the chord.
-        distanceToChord = (((binIndices - chordX) * chordRise
-                            - (binHeights - chordY) * chordRun) / chordLength)
-        valleyIndex = int(leftPeak + np.argmax(distanceToChord))
+        return flat(finiteValues.mean())
 
+    valleyIndex = _furthest_below_chord(smoothed, chordLo, chordHi)
     result.update({'threshold': float(centres[valleyIndex]),
-                   'peak_lo': leftPeak, 'peak_hi': rightPeak,
-                   'valley': valleyIndex, 'ok': True})
+                   'chord_lo': chordLo, 'chord_hi': chordHi,
+                   'valley': valleyIndex, 'mode': mode,
+                   'ok': mode == 'valley'})
     return result
 
 

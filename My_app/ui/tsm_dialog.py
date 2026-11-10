@@ -24,6 +24,14 @@ class TsmThresholdDialog(wx.Dialog):
     #: Idle time before the preview is recomputed, in milliseconds.
     PREVIEW_DELAY_MS = 120
 
+    #: What the histogram's shape allowed; see histogram_valley().
+    SHAPE_NOTE = {
+        'valley': "",
+        'triangle': "   (one hump only: the level comes from the triangle "
+                    "construction, not from a valley between two peaks)",
+        'flat': "   (no hump found: the level is the mean of the image)",
+    }
+
     def __init__(self, parent, phase, image_name=""):
         super().__init__(parent, title="TSM - binarisation threshold",
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
@@ -85,7 +93,7 @@ class TsmThresholdDialog(wx.Dialog):
 
         buttonRow = wx.BoxSizer(wx.HORIZONTAL)
         self.btn_reset = wx.Button(
-            self, label="Back to the valley (%.4f)" % self.suggested)
+            self, label="Back to the suggestion (%.4f)" % self.suggested)
         buttonRow.Add(self.btn_reset, 0, wx.RIGHT, 10)
         buttonRow.AddStretchSpacer()
         self.btn_ok = wx.Button(self, wx.ID_OK, "OK")
@@ -122,14 +130,14 @@ class TsmThresholdDialog(wx.Dialog):
 
     # --------------------------------------------------------------- paint
     def _update_label(self):
-        """Show the threshold, and whether the histogram is bimodal.
+        """Show the threshold, and what the histogram's shape allowed.
 
         The resulting metric is deliberately not previewed here: this window
         computed it on its own, and the two would have to be kept in step for
         the reading to mean anything."""
-        warning = "" if self.info['ok'] else \
-            "   (no second peak: the histogram is not bimodal)"
-        self.readout.SetLabel("Threshold %.4f%s" % (self.threshold, warning))
+        self.readout.SetLabel(
+            "Threshold %.4f%s" % (self.threshold,
+                                  self.SHAPE_NOTE[self.info['mode']]))
 
     def _refresh(self):
         """Redraw both previews for the current threshold."""
@@ -156,19 +164,21 @@ class TsmThresholdDialog(wx.Dialog):
         axes.fill_between(centres, smoothed, color=ACCENT, alpha=0.25, linewidth=0)
         axes.plot(centres, smoothed, color=ACCENT, linewidth=1.6)
 
-        if self.info['ok']:
-            leftPeak, rightPeak = self.info['peak_lo'], self.info['peak_hi']
-            # The chord and the drop: where the suggestion comes from.
-            axes.plot([centres[leftPeak], centres[rightPeak]],
-                      [smoothed[leftPeak], smoothed[rightPeak]],
+        if self.info['mode'] != 'flat':
+            # The chord and the drop: where the suggestion comes from. Drawn
+            # for the triangle construction too, since the level is read off
+            # the chord there in exactly the same way.
+            chordLo, chordHi = self.info['chord_lo'], self.info['chord_hi']
+            axes.plot([centres[chordLo], centres[chordHi]],
+                      [smoothed[chordLo], smoothed[chordHi]],
                       color=INK_SOFT, linewidth=1.0, linestyle='-')
-            axes.plot([centres[leftPeak], centres[rightPeak]],
-                      [smoothed[leftPeak], smoothed[rightPeak]], 'o',
+            axes.plot([centres[chordLo], centres[chordHi]],
+                      [smoothed[chordLo], smoothed[chordHi]], 'o',
                       color=INK_SOFT, markersize=5)
             valleyIndex = self.info['valley']
             chordHeight = np.interp(centres[valleyIndex],
-                                    [centres[leftPeak], centres[rightPeak]],
-                                    [smoothed[leftPeak], smoothed[rightPeak]])
+                                    [centres[chordLo], centres[chordHi]],
+                                    [smoothed[chordLo], smoothed[chordHi]])
             axes.plot([centres[valleyIndex], centres[valleyIndex]],
                       [smoothed[valleyIndex], chordHeight],
                       color=INK_SOFT, linewidth=1.0, linestyle=':')
