@@ -21,12 +21,12 @@ _WELCOME_SHOWN = False
 
 
 class _Swatch(wx.Panel):
-    """A rounded colour chip. wx has no rounded static control, and a plain
+    """A rounded color chip. wx has no rounded static control, and a plain
     square panel reads as an unfinished widget rather than a key."""
 
-    def __init__(self, parent, colour, size):
+    def __init__(self, parent, color, size):
         super().__init__(parent, size=size)
-        self._colour = wx.Colour(*colour)
+        self._color = wx.Colour(*color)
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.Bind(wx.EVT_PAINT, self._on_paint)
 
@@ -38,11 +38,11 @@ class _Swatch(wx.Panel):
         if context is None:
             return
         width, height = self.GetSize()
-        context.SetBrush(wx.Brush(self._colour))
+        context.SetBrush(wx.Brush(self._color))
         # A hairline a shade darker, so a pale chip still has an edge.
-        context.SetPen(wx.Pen(wx.Colour(max(0, self._colour.Red() - 45),
-                                        max(0, self._colour.Green() - 45),
-                                        max(0, self._colour.Blue() - 45)), 1))
+        context.SetPen(wx.Pen(wx.Colour(max(0, self._color.Red() - 45),
+                                        max(0, self._color.Green() - 45),
+                                        max(0, self._color.Blue() - 45)), 1))
         context.DrawRoundedRectangle(0.5, 0.5, width - 1, height - 1,
                                      min(width, height) / 3.0)
 
@@ -80,11 +80,14 @@ class WxThresholdDialog(wx.Dialog):
     #: Idle time before the preview is recomputed, in milliseconds.
     PREVIEW_DELAY_MS = 200
 
+    #: Whether the batch left this recipe free to change; see _sync_controls.
+    _recipe_editable = True
+
     #: One preview. A sample mask is the exact negative of a background one,
     #: and the filtered copy only differs from the phase when a filter is on;
     #: what has to be checked is which pixels end up being measured, and that
     #: is only legible drawn over the phase itself.
-    #: The sample is tinted; what stays grey is what the metrics will read.
+    #: The sample is tinted; what stays gray is what the metrics will read.
     SAMPLE_TINT = (220, 70, 70)
     BACKGROUND_SWATCH = (150, 150, 150)
 
@@ -130,7 +133,7 @@ class WxThresholdDialog(wx.Dialog):
         self.GetSizer().Fit(self)
         self.SetSize(wx.Size(min(self.GetSize().width, desktop.width),
                              min(self.GetSize().height, desktop.height)))
-        self.Centre()
+        self.Center()
         wx.CallAfter(self._show_welcome_message)
 
     # ------------------------------------------------------------------- help
@@ -184,22 +187,22 @@ class WxThresholdDialog(wx.Dialog):
         return column
 
     def _build_legend(self):
-        """Says what the two colours mean, where they are being looked at."""
+        """Says what the two colors mean, where they are being looked at."""
         row = wx.BoxSizer(wx.HORIZONTAL)
         chip = self.FromDIP(wx.Size(13, 13))
         entries = ((self.SAMPLE_TINT, "Sample", "excluded"),
                    (self.BACKGROUND_SWATCH, "Background", "measured"))
-        for index, (colour, name, role) in enumerate(entries):
+        for index, (color, name, role) in enumerate(entries):
             if index:
                 row.AddSpacer(self.FromDIP(26))
-            row.Add(_Swatch(self, colour, chip), 0,
+            row.Add(_Swatch(self, color, chip), 0,
                     wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 7)
 
             label = wx.StaticText(self, label=name)
             label.SetForegroundColour(wx.Colour(45, 45, 45))
             row.Add(label, 0, wx.ALIGN_CENTER_VERTICAL)
 
-            # The role in lighter grey: it is the gloss, not the key.
+            # The role in lighter gray: it is the gloss, not the key.
             note = wx.StaticText(self, label="  " + role)
             note.SetForegroundColour(wx.Colour(130, 130, 130))
             row.Add(note, 0, wx.ALIGN_CENTER_VERTICAL)
@@ -243,6 +246,10 @@ class WxThresholdDialog(wx.Dialog):
 
         self.btn_ok.Bind(wx.EVT_BUTTON, self._on_ok)
         self.btn_cancel.Bind(wx.EVT_BUTTON, self._on_cancel)
+        # The buttons carry their own ids, so SetDefault alone leaves Enter and
+        # Escape with nothing to aim at while a spin box holds the focus.
+        self.SetAffirmativeId(self.btn_ok.GetId())
+        self.SetEscapeId(self.btn_cancel.GetId())
         return column
 
     def _box(self, label, width):
@@ -322,9 +329,19 @@ class WxThresholdDialog(wx.Dialog):
         event.Skip()
         if self._syncing:
             return
+        typed = float(self.threshold_entry.GetValue())
+
+        automatic = self._automatic_level()
+        if automatic is not None and abs(typed - automatic) < 5e-4:
+            # This also fires on KILL_FOCUS, which happens whenever the box is
+            # tabbed past: only a level that actually moved takes over from
+            # the method. Half a step of the box is the smallest real move.
+            return
+        self._take_over_threshold()
+
         self._syncing = True
-        self.recipe.manual_threshold = float(self.threshold_entry.GetValue())
-        self.slider.SetValue(int(round(self.recipe.manual_threshold * 1000)))
+        self.recipe.manual_threshold = typed
+        self.slider.SetValue(int(round(typed * 1000)))
         self.slider_label.SetLabel("Threshold")
         self._syncing = False
         self._schedule_preview()
@@ -359,7 +376,7 @@ class WxThresholdDialog(wx.Dialog):
         return sizer
 
     def _spin_row(self, sizer, label, low, high, tip, log=False):
-        """A labelled slider with a numeric box beside the name.
+        """A labeled slider with a numeric box beside the name.
 
         The box is the value: it can be typed into or stepped with the arrows,
         and the slider follows. The slider is for sweeping, the box for saying
@@ -468,6 +485,7 @@ class WxThresholdDialog(wx.Dialog):
 
         # Everything but the threshold belongs to the batch.
         editable = (not self.recipe_locked) or self.override
+        self._recipe_editable = editable
         for widget in (self.spin_tophat, self.spin_median, self.spin_min_area,
                        self.spin_hole_area, self.spin_guard,
                        self.choice_method, self.check_invert):
@@ -477,26 +495,56 @@ class WxThresholdDialog(wx.Dialog):
         self.Layout()
 
     def _sync_slider(self):
-        """The slider and box are live only for Manual; otherwise they report
-        the level the method picked for this image."""
-        manual = self.recipe.method == "manual"
-        self.slider.Enable(manual)
-        self.threshold_entry.Enable(manual)
+        """The slider and the box carry whichever level is in force.
 
-        self._syncing = True
+        With Manual that is the level set here. With Otsu or Triangle it is the
+        one the method found for this image, shown rather than hidden -- and
+        movable, because an automatic level is a starting point: the method
+        reads one histogram, the operator looks at the mask it produces.
+        Moving it hands the level over to Manual, see _take_over_threshold."""
+        manual = self.recipe.method == "manual"
+        # Manual stays live even under a locked batch recipe: the threshold is
+        # the one thing meant to be tuned per image. Correcting an automatic
+        # level changes the METHOD, which is the batch's to decide, so that
+        # needs the recipe unlocked.
+        live = manual or self._recipe_editable
+        self.slider.Enable(live)
+        self.threshold_entry.Enable(live)
+
         if manual:
-            self.slider.SetValue(int(round(self.recipe.manual_threshold * 1000)))
-            self.threshold_entry.SetValue(self.recipe.manual_threshold)
+            level = self.recipe.manual_threshold
             self.slider_label.SetLabel("Threshold")
         else:
             level = None if self._last_result is None else self._last_result["level"]
             self.slider_label.SetLabel(
                 "Threshold  (%s, per image)" % THRESHOLD_LABELS[self.recipe.method])
-            if level is not None:
-                level = float(np.clip(level, 0, 1))
-                self.slider.SetValue(int(round(level * 1000)))
-                self.threshold_entry.SetValue(level)
+
+        self._syncing = True
+        if level is not None and np.isfinite(level):
+            level = float(np.clip(level, 0, 1))
+            self.slider.SetValue(int(round(level * 1000)))
+            self.threshold_entry.SetValue(level)
         self._syncing = False
+
+    def _take_over_threshold(self):
+        """A level moved by hand is Manual, and the method box must say so.
+
+        Otsu and Triangle each compute one number from the histogram. Leaving
+        their name on a level the operator moved would write a recipe into the
+        results that re-running the method would not reproduce."""
+        if self.recipe.method == "manual" or not self._recipe_editable:
+            return
+        self.recipe.method = "manual"
+        self.choice_method.SetSelection(THRESHOLD_METHODS.index("manual"))
+
+    def _automatic_level(self):
+        """The level the current automatic method landed on, if there is one."""
+        if self.recipe.method == "manual" or self._last_result is None:
+            return None
+        level = self._last_result["level"]
+        if level is None or not np.isfinite(level):
+            return None
+        return float(np.clip(level, 0, 1))
 
     def _collect(self):
         """Read the widgets back into the recipe."""
@@ -544,10 +592,12 @@ class WxThresholdDialog(wx.Dialog):
 
     def _on_slider(self, event):
         """Follow the hand with the number; make the heavy part wait."""
+        self._take_over_threshold()
         self.recipe.manual_threshold = float(self.slider.GetValue()) / 1000.0
         if not self._syncing:
             self._syncing = True
             self.threshold_entry.SetValue(self.recipe.manual_threshold)
+            self.slider_label.SetLabel("Threshold")
             self._syncing = False
         self._schedule_preview()
 
@@ -568,13 +618,13 @@ class WxThresholdDialog(wx.Dialog):
         self.EndModal(wx.ID_CANCEL)
 
     # ----------------------------------------------------------------- render
-    def _overlay(self, normalised, sample):
-        """The phase with the sample tinted: what stays grey gets measured.
+    def _overlay(self, normalized, sample):
+        """The phase with the sample tinted: what stays gray gets measured.
 
         A bare binary mask cannot tell you whether the right side was kept.
         Drawn on the phase, picking the wrong region is immediately visible."""
-        grey = (np.clip(normalised, 0, 1) * 255).astype(np.uint8)
-        rgb = np.dstack([grey, grey, grey]).astype(np.uint16)
+        gray = (np.clip(normalized, 0, 1) * 255).astype(np.uint8)
+        rgb = np.dstack([gray, gray, gray]).astype(np.uint16)
         for channel, tint in enumerate(self.SAMPLE_TINT):
             # Half the tint, half the phase, so texture shows through.
             rgb[..., channel][sample] = (rgb[..., channel][sample] + tint) // 2
@@ -588,7 +638,7 @@ class WxThresholdDialog(wx.Dialog):
         self._last_result = result
 
         self._bitmap.SetBitmap(numpy_to_wx_bitmap(
-            self._overlay(result["normalised"], result["sample"]),
+            self._overlay(result["normalized"], result["sample"]),
             self.preview_size, self))
 
         backgroundFraction = float(np.mean(result["background"]))

@@ -1,5 +1,5 @@
 """Toolbar icons, rendered from the Tabler Icons SVG set at any size."""
-# The untouched Tabler `outline` set, MIT licence: only the colour is changed.
+# The untouched Tabler `outline` set, MIT license: only the color is changed.
 import os
 
 import wx
@@ -12,8 +12,8 @@ ACCENT = "#2a78d6"
 NEUTRAL = "#52514e"
 DANGER = "#d03b3b"
 
-#: Which colour each icon is drawn in.
-_COLOUR = {
+#: Which color each icon is drawn in.
+_COLOR = {
     'open': ACCENT,
     'save': ACCENT,
     'background': ACCENT,
@@ -48,7 +48,7 @@ def icon(name, size=24, window=None):
         return _CACHE[cacheKey]
 
     # wx.svg has no CSS context, so Tabler's currentColor is substituted here.
-    markup = _load(name).replace('currentColor', _COLOUR.get(name, NEUTRAL))
+    markup = _load(name).replace('currentColor', _COLOR.get(name, NEUTRAL))
 
     pixelSize = max(1, int(round(size * scaleFactor)))
     svgImage = wx.svg.SVGimage.CreateFromBytes(markup.encode('utf-8'))

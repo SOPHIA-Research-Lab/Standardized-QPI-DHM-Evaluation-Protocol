@@ -71,6 +71,9 @@ class ImageSelectionDialog(wx.Dialog):
         buttonSizer.AddButton(okButton)
         buttonSizer.AddButton(cancelButton)
         buttonSizer.Realize()
+        # Enter runs the selection: Realize() lays the buttons out, it does
+        # not make either of them the one Enter presses.
+        okButton.SetDefault()
         
         mainSizer.Add(buttonSizer, 0, wx.ALL | wx.ALIGN_CENTER, 10)
         
@@ -123,7 +126,7 @@ class ImageSelectionDialog(wx.Dialog):
 
 
 def show_image_selection_dialog(parent, notebook):
-    """Ask which open images to analyse; return their indices, or None."""
+    """Ask which open images to analyze; return their indices, or None."""
     pageCount = notebook.GetPageCount()
     
     if pageCount == 0:

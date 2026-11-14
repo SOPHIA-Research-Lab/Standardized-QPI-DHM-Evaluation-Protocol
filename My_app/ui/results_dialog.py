@@ -8,7 +8,7 @@ import wx.grid
 #: Shade for the odd rows, as in the tables of the main window.
 ALTERNATE_ROW = wx.Colour(0xF5, 0xF7, 0xFA)
 WHITE = wx.Colour(0xFF, 0xFF, 0xFF)
-#: A value that could not be computed is greyed; an error is marked.
+#: A value that could not be computed is grayed; an error is marked.
 MUTED_INK = wx.Colour(0x77, 0x77, 0x77)
 ERROR_INK = wx.Colour(0xC0, 0x39, 0x2B)
 
@@ -59,8 +59,10 @@ class ResultsGridDialog(wx.Dialog):
 
         self.SetSizer(mainSizer)
         closeButton.SetDefault()
+        # The grid would otherwise hold the focus, and it swallows Enter.
+        closeButton.SetFocus()
         self._fit_to_contents(mainSizer)
-        self.CentreOnParent()
+        self.CenterOnParent()
 
     # ----------------------------------------------------------------- grid
     def _build_grid(self):
@@ -79,8 +81,8 @@ class ResultsGridDialog(wx.Dialog):
         headerFont = grid.GetLabelFont().Bold()
         grid.SetLabelFont(headerFont)
         grid.SetLabelBackgroundColour(ALTERNATE_ROW)
-        # The metric name reads as a label, not as a centred heading.
-        grid.SetRowLabelAlignment(wx.ALIGN_LEFT, wx.ALIGN_CENTRE)
+        # The metric name reads as a label, not as a centerd heading.
+        grid.SetRowLabelAlignment(wx.ALIGN_LEFT, wx.ALIGN_CENTER)
 
         for column, imageName in enumerate(self.image_names):
             grid.SetColLabelValue(column, imageName)
@@ -94,14 +96,26 @@ class ResultsGridDialog(wx.Dialog):
                 text, kind, _ = self.cells.get((imageName, label),
                                                ("", 'none', ''))
                 grid.SetCellValue(row, column, text)
-                grid.SetCellAlignment(row, column, wx.ALIGN_RIGHT, wx.ALIGN_CENTRE)
+                grid.SetCellAlignment(row, column, wx.ALIGN_RIGHT, wx.ALIGN_CENTER)
                 grid.SetCellBackgroundColour(row, column, shade)
                 ink = _INK_BY_KIND.get(kind)
                 if ink is not None:
                     grid.SetCellTextColour(row, column, ink)
 
+        # wx.grid.Grid reads Enter as "move down one cell" and never passes it
+        # on, so the default button never sees it once the grid has the focus.
+        for window in (grid, grid.GetGridWindow()):
+            window.Bind(wx.EVT_KEY_DOWN, self._on_key)
+
         self._size_columns(grid)
         return grid
+
+    def _on_key(self, event):
+        """Enter closes the summary, as it does in every other dialog."""
+        if event.GetKeyCode() in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
+            self.EndModal(wx.ID_OK)
+            return
+        event.Skip()
 
     def _size_columns(self, grid):
         """Wide enough for the numbers AND for the image name above them."""

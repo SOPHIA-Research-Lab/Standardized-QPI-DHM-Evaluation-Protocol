@@ -4,8 +4,8 @@ from skimage.segmentation import watershed
 import numpy as np
 
 
-# The file convention for a raster phase map: an 8-bit grey level spans the
-# whole principal interval, so phase zero sits at mid grey. The endpoints are
+# The file convention for a raster phase map: an 8-bit gray level spans the
+# whole principal interval, so phase zero sits at mid gray. The endpoints are
 # named rather than inlined because they are what makes a published number
 # reproducible from the stored image.
 GRAY_MIN, GRAY_MAX = 0.0, 255.0
@@ -13,13 +13,13 @@ PHASE_MIN, PHASE_MAX = -np.pi, np.pi
 
 
 def gray_to_phase(values: np.ndarray) -> np.ndarray:
-    """Map 8-bit grey levels onto the phase interval [-pi, pi], linearly.
+    """Map 8-bit gray levels onto the phase interval [-pi, pi], linearly.
 
     The scale is fixed, never inferred from the data: a previous version
     divided by 255 only when the image's maximum exceeded 1, so a nearly black
-    image was read on a different scale from every other one, and the same grey
+    image was read on a different scale from every other one, and the same gray
     level could come out as -pi or +pi depending on what else the image held.
-    Values outside the grey range saturate rather than extrapolate."""
+    Values outside the gray range saturate rather than extrapolate."""
     values = np.clip(np.asarray(values, dtype=float), GRAY_MIN, GRAY_MAX)
     return PHASE_MIN + (values - GRAY_MIN) * (PHASE_MAX - PHASE_MIN) / (GRAY_MAX - GRAY_MIN)
 
@@ -48,11 +48,11 @@ def build_background_mask(image: np.ndarray, threshold_value: float,
 
     phaseMin, phaseMax = np.min(image), np.max(image)
     if phaseMax - phaseMin < 1e-12:
-        normalisedPhase = np.zeros_like(image, dtype=float)
+        normalizedPhase = np.zeros_like(image, dtype=float)
     else:
-        normalisedPhase = (image - phaseMin) / (phaseMax - phaseMin)
+        normalizedPhase = (image - phaseMin) / (phaseMax - phaseMin)
 
-    aboveThreshold = normalisedPhase > threshold_value
+    aboveThreshold = normalizedPhase > threshold_value
     sampleMask = aboveThreshold.copy() if sample_is_white else ~aboveThreshold
 
     try:

@@ -60,14 +60,14 @@ def calculate_ssim(sample, ground_truth):
     """Structural Similarity Index: 1 is identical, 0 is unrelated."""
     samplePhase, ground_truth = _prepare_sample_and_gt(sample, ground_truth)
 
-    # Both normalised with the REFERENCE range, so amplitude differences stay.
+    # Both normalized with the REFERENCE range, so amplitude differences stay.
     referenceMin = ground_truth.min()
     referenceRange = ground_truth.max() - referenceMin
 
-    sampleNormalised = (samplePhase - referenceMin) / referenceRange
-    referenceNormalised = (ground_truth - referenceMin) / referenceRange
+    sampleNormalized = (samplePhase - referenceMin) / referenceRange
+    referenceNormalized = (ground_truth - referenceMin) / referenceRange
 
-    return ssim(sampleNormalised, referenceNormalised, data_range=1.0)
+    return ssim(sampleNormalized, referenceNormalized, data_range=1.0)
 
 
 def calculate_mse(sample, ground_truth):

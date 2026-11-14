@@ -466,7 +466,7 @@ class PerformanceAnalyzerApp(wx.Frame):
         self.CreateStatusBar()
         self.setup_menus()
         self.setup_ui()
-        self.Centre()
+        self.Center()
 
     def setup_menus(self):
         menubar = wx.MenuBar()
@@ -495,7 +495,7 @@ class PerformanceAnalyzerApp(wx.Frame):
         # One root panel, and the notebook inside a sizer. Before this the
         # notebook hung straight off the wx.Frame with no sizer at all, so it
         # did not fill the window and the frame's COLOUR_APPWORKSPACE
-        # (#ABABAB) showed around it, a different grey from the #F0F0F0 of the
+        # (#ABABAB) showed around it, a different gray from the #F0F0F0 of the
         # panels inside. The main window had the same defect.
         self.root_panel = wx.Panel(self)
 
