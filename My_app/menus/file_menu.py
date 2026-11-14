@@ -3,6 +3,15 @@ import wx
 def create(parent_frame):
     fileMenu = wx.Menu()
     fileMenu.Append(wx.ID_OPEN, "&Open\tCtrl+O", "Open Image")
+
+    # A bundled sample lives in the application's own folder, so this is how a
+    # copy of one gets out to a reconstruction program.
+    parent_frame.save_image_id = wx.NewIdRef()
+    fileMenu.Append(parent_frame.save_image_id, "Save &Image As...\tCtrl+Shift+S",
+                    "Save a copy of the file shown in the current tab")
+    parent_frame.Bind(wx.EVT_MENU, parent_frame.on_save_image,
+                      id=parent_frame.save_image_id)
+
     # Ctrl+S saves the RESULTS, not the image on screen.
     fileMenu.Append(wx.ID_SAVE, "&Save Results\tCtrl+S", "Export the metric and mask tables to an Excel file")
     fileMenu.AppendSeparator()

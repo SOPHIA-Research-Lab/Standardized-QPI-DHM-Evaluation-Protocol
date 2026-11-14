@@ -83,6 +83,30 @@ def maximum_minus_minimum(phase: np.ndarray, use_unwrap: bool = False):
     return float(np.max(phase) - np.min(phase))
 
 
+def std_global(phase: np.ndarray, use_unwrap: bool = False):
+    """Standard deviation of the whole phase map, in radians.
+
+    The companion of the PV above: that one rests on two pixels, this one on
+    all of them, so a single outlier moves PV and leaves STD where it was.
+    No mask is involved -- Module II measures the map as it stands, sample
+    included, which is what separates this from STD_B in Module I.
+    """
+    phase = np.asarray(phase, dtype=np.float64)
+    if phase.ndim != 2:
+        raise ValueError("Phase image must be 2D.")
+
+    if use_unwrap:
+        phase = unwrap_phase(phase)
+
+    # One NaN would poison the whole reading, and every other path here
+    # returns a float, which is all the table can format.
+    finiteValues = phase[np.isfinite(phase)]
+    if finiteValues.size == 0:
+        return float('nan')
+
+    return float(np.std(finiteValues))
+
+
 def spatial_frequency_global(phase: np.ndarray, use_unwrap: bool = False):
     """Spatial frequency sqrt(RF^2 + CF^2) of the phase normalised to [0, 1]."""
     phase = np.asarray(phase, dtype=np.float64)

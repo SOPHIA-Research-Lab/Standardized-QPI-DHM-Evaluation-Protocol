@@ -115,6 +115,9 @@ def load_sample(parent_frame, notebook, subfolder, filename):
         # Carried by the page, so that the restriction follows the tab the user
         # is looking at instead of the last file that happened to be opened.
         page.is_sample = True
+        # The sample ships inside the application, so File > Save Image As is
+        # how a copy gets out to a reconstruction program.
+        page.source_path = samplePath
         parent_frame.mark_as_sample_image(True)
 
         wx.MessageBox(

@@ -84,6 +84,10 @@ def _show_module2_dialog(parent_frame):
         # Maximum-Minus-Minimum
         'mmm_global': {'label': 'PV - Global'},
         'mmm_unwrapped': {'label': 'PV - Unwrapped'},
+
+        # Standard deviation
+        'std_global': {'label': 'STD - Global'},
+        'std_global_unwrapped': {'label': 'STD - Unwrapped'},
         
         # Phase Gradient Metric: local gradient
         'gradient_global': {'label': 'PGM - Global'},
