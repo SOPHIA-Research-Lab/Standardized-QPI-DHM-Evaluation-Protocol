@@ -12,7 +12,9 @@ class AnalysisCache:
         self.unwrapped = {}       # image name -> {fingerprint, unwrapped}
         self.zones = {}           # cache key   -> (zones, num_zones)
         self.shared_zones = None  # (zones, num_zones) reused across images
-        #: (image name, unwrapped) -> (fingerprint, threshold) for TSM.
+        #: (image name, unwrapped) -> (fingerprint, threshold, sample_is_bright)
+        #: for TSM. The side belongs with the level: the same threshold reports
+        #: the sample or its complement depending on which side is counted.
         self.tsm_thresholds = {}
         #: The Module I segmentation recipe, settled on the first image and
         #: reused for the rest so that every row of the table is comparable.

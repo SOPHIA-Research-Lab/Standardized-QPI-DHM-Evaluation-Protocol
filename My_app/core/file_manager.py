@@ -81,13 +81,13 @@ def process_complex_field(notebook, complex_field, filename, field_name):
     amplitudeMin = np.min(amplitude)
     amplitudeMax = np.max(amplitude)
 
-    # The amplitude is normalised for DISPLAY only; the phase is kept as is.
-    normalisedAmplitude = amplitude - amplitudeMin
+    # The amplitude is normalized for DISPLAY only; the phase is kept as is.
+    normalizedAmplitude = amplitude - amplitudeMin
     if amplitudeMax > amplitudeMin:
-        normalisedAmplitude = normalisedAmplitude / (amplitudeMax - amplitudeMin)
-    normalisedAmplitude = (normalisedAmplitude * 255).astype(np.uint8)
+        normalizedAmplitude = normalizedAmplitude / (amplitudeMax - amplitudeMin)
+    normalizedAmplitude = (normalizedAmplitude * 255).astype(np.uint8)
 
-    displayImage = Image.fromarray(normalisedAmplitude, mode='L')
+    displayImage = Image.fromarray(normalizedAmplitude, mode='L')
     page = notebook.add_image_tab(displayImage, f"{filename} [{field_name}]")
 
     page.amplitude = amplitude
@@ -119,7 +119,7 @@ def process_phase_array(notebook, phase_array, filename, field_name):
     phaseMin = float(np.min(phase))
     phaseMax = float(np.max(phase))
 
-    # Normalised for DISPLAY only; the phase itself is kept untouched.
+    # Normalized for DISPLAY only; the phase itself is kept untouched.
     displayLevels = phase - phaseMin
     if phaseMax > phaseMin:
         displayLevels = displayLevels / (phaseMax - phaseMin)

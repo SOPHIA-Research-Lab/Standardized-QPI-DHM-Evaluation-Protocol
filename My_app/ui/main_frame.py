@@ -38,7 +38,7 @@ class MainFrame(wx.Frame):
         self.Show()
 
     def _initialize_components(self):
-        # One root panel: a control on a bare wx.Frame paints a different grey.
+        # One root panel: a control on a bare wx.Frame paints a different gray.
         self.root_panel = wx.Panel(self)
 
         # Image on top, result tables below, with a sash the user can drag.
@@ -57,7 +57,7 @@ class MainFrame(wx.Frame):
         tablesSizer.Add(self.tables_splitter, 1, wx.EXPAND)
         self.tables_panel.SetSizer(tablesSizer)
 
-        # An empty AuiNotebook paints its own grey, so it is hidden until use.
+        # An empty AuiNotebook paints its own gray, so it is hidden until use.
         self.workspace = wx.Panel(self.splitter)
 
         self.welcome_panel = wx.Panel(self.workspace)
@@ -67,7 +67,7 @@ class MainFrame(wx.Frame):
             label="No image open\n\n"
                   "File > Open (Ctrl+O) to load a compensated phase map,\n"
                   "or pick one from the Samples menu.",
-            style=wx.ALIGN_CENTRE_HORIZONTAL)
+            style=wx.ALIGN_CENTER_HORIZONTAL)
         source = message.GetFont()
         source.SetPointSize(source.GetPointSize() + 1)
         message.SetFont(source)
@@ -89,6 +89,10 @@ class MainFrame(wx.Frame):
         # Unsplit until there is something to show below.
         self.splitter.Initialize(self.workspace)
         self.metric_table = None
+        # The metric table's names ride in a list of their own, pinned left.
+        self.metric_names = None
+        self.metric_pane = None
+        self._syncing_names = False
         self.mask_table = None
         self.is_sample_image = False
         self.ground_truth_path = None
@@ -112,7 +116,7 @@ class MainFrame(wx.Frame):
         self.SetStatusText("Ready")
         self._sort_state = {}
         
-        # The catalogue is in analysis/catalog.py: it defines the protocol.
+        # The catalog is in analysis/catalog.py: it defines the protocol.
         self.metric_map = METRIC_MAP
 
     def on_check_imagej_updates(self, event):
@@ -186,7 +190,7 @@ class MainFrame(wx.Frame):
         addTool("ImageJ", 'imagej', self.on_send_to_imagej,
                     "Send the current image to ImageJ and watch it for edits")
         addSeparator()
-        # Kept so the toolbar can be greyed out with the Analysis menu; a
+        # Kept so the toolbar can be grayed out with the Analysis menu; a
         # disabled menu entry beside a live button would be no restriction.
         self.module_tool_ids = [
             addTool("Background", 'background',
@@ -311,7 +315,9 @@ class MainFrame(wx.Frame):
     def _arrange_tables(self):
         """Put whichever tables exist into the lower pane."""
         # The mask table takes only the height it needs; a sash splits the rest.
-        maskTable, metricTable = self.mask_table, self.metric_table
+        # The metric table travels inside the pane that carries its frozen
+        # names; the mask table, with four columns, goes in on its own.
+        maskTable, metricTable = self.mask_table, self.metric_pane
 
         if maskTable and metricTable:
             if not self.tables_splitter.IsSplit():
@@ -375,6 +381,8 @@ class MainFrame(wx.Frame):
         ascending = not (previous is not None and previous[0] == columnIndex and previous[1])
         self._sort_state[id(table)] = (columnIndex, ascending)
         self._sort_table(table, raw_store, columnIndex, ascending)
+        if table is self.metric_table:
+            self._refresh_frozen_names()
 
     @staticmethod
     def _sort_table(table, raw_store, col, ascending):
@@ -492,9 +500,50 @@ class MainFrame(wx.Frame):
         if self.metric_table is not None:
             return
         
-        self.metric_table = wx.ListCtrl(self.tables_splitter, style=wx.LC_REPORT)
+        # A wx.ListCtrl has no frozen column, so the names get a list of their
+        # own beside the metrics: with twenty metric columns the row being read
+        # leaves the screen as soon as the horizontal bar moves, and a number
+        # whose image is off screen says nothing.
+        # A sash rather than a fixed width: the names run from eight
+        # characters to forty depending on how the files were named.
+        self.metric_pane = wx.SplitterWindow(
+            self.tables_splitter, style=wx.SP_LIVE_UPDATE | wx.SP_3DSASH)
+        self.metric_pane.SetMinimumPaneSize(self.FromDIP(80))
+
+        nameWidth = self.FromDIP(250)
+        self.metric_names = wx.ListCtrl(self.metric_pane, style=wx.LC_REPORT)
+        self._style_table(self.metric_names)
+        self.metric_names.InsertColumn(0, "Image Name",
+                                       width=nameWidth - self.FromDIP(4))
+        try:
+            # One vertical bar for the pair; this list follows the other.
+            self.metric_names.ShowScrollbars(wx.SHOW_SB_NEVER, wx.SHOW_SB_NEVER)
+        except Exception:
+            pass
+
+        self.metric_table = wx.ListCtrl(self.metric_pane, style=wx.LC_REPORT)
         self._style_table(self.metric_table)
-        self.metric_table.InsertColumn(0, "Image Name", width=self.FromDIP(250))
+        # Column 0 still holds the name, because every lookup reads it from
+        # there; it simply takes no width, since the frozen list shows it.
+        self.metric_table.InsertColumn(0, "Image Name", width=0)
+
+        self.metric_pane.SplitVertically(self.metric_names, self.metric_table,
+                                         nameWidth)
+        # Only the metric side grows when the window does.
+        self.metric_pane.SetSashGravity(0.0)
+        for sashEvent in (wx.EVT_SPLITTER_SASH_POS_CHANGED,
+                          wx.EVT_SPLITTER_SASH_POS_CHANGING):
+            self.metric_pane.Bind(sashEvent, self._on_names_sash)
+
+        for window in (self.metric_table, self.metric_names):
+            window.Bind(wx.EVT_SCROLLWIN, self._on_metric_scroll)
+            window.Bind(wx.EVT_MOUSEWHEEL, self._on_metric_wheel)
+        self.metric_names.Bind(wx.EVT_LIST_COL_CLICK,
+                               lambda evt: self._on_column_click(
+                                   evt, self.metric_table, self._metric_values))
+        self.metric_names.Bind(wx.EVT_CONTEXT_MENU,
+                               self.on_metric_table_context_menu)
+
         self.metric_table.Bind(
             wx.EVT_LIST_COL_CLICK,
             lambda evt: self._on_column_click(evt, self.metric_table,
@@ -504,6 +553,73 @@ class MainFrame(wx.Frame):
        
         self._arrange_tables()
         self._show_tables_pane()
+
+    def _on_names_sash(self, event):
+        """The name column fills whatever width the sash leaves it.
+
+        Without this the column keeps its old width and the gap between the
+        longest name and the first metric is empty space nobody asked for."""
+        event.Skip()
+        if self.metric_names is None:
+            return
+        width = max(self.FromDIP(40),
+                    event.GetSashPosition() - self.FromDIP(4))
+        self.metric_names.SetColumnWidth(0, width)
+        wx.CallAfter(self._align_frozen_names)
+
+    def _refresh_frozen_names(self):
+        """Rebuild the pinned name list from column 0 of the metric table.
+
+        Rebuilt rather than kept in step edit by edit: the rows change in three
+        places -- a new image, a sort, a cleared table -- and five names cost
+        nothing to write out again."""
+        if self.metric_names is None or self.metric_table is None:
+            return
+        self.metric_names.DeleteAllItems()
+        for rowIndex in range(self.metric_table.GetItemCount()):
+            self.metric_names.InsertItem(
+                rowIndex, self.metric_table.GetItem(rowIndex, 0).GetText())
+        self._stripe(self.metric_names)
+        self._align_frozen_names()
+
+    def _align_frozen_names(self):
+        """Put the name list's first row at the same height as the table's."""
+        names, table = self.metric_names, self.metric_table
+        if names is None or table is None or table.GetItemCount() == 0:
+            return
+        if names.GetItemCount() != table.GetItemCount():
+            return
+        try:
+            offset = names.GetItemRect(0).y - table.GetItemRect(0).y
+        except Exception:
+            return
+        if offset:
+            names.ScrollList(0, offset)
+
+    def _on_metric_scroll(self, event):
+        """Either list scrolled: bring the other one level with it."""
+        event.Skip()
+        if event.GetOrientation() == wx.VERTICAL:
+            wx.CallAfter(self._align_frozen_names)
+
+    def _on_metric_wheel(self, event):
+        """The wheel over either list scrolls the pair."""
+        if self._syncing_names:
+            event.Skip()
+            return
+        self._syncing_names = True
+        try:
+            if event.GetEventObject() is not self.metric_table                     and self.metric_table is not None:
+                # Over the names: the metric table is the one that really
+                # scrolls, so the wheel is handed to it.
+                self.metric_table.ScrollLines(
+                    -event.GetWheelRotation() // event.GetWheelDelta()
+                    * event.GetLinesPerAction())
+            else:
+                event.Skip()
+        finally:
+            self._syncing_names = False
+        wx.CallAfter(self._align_frozen_names)
 
     def _ensure_column(self, col_name: str, width: int = 120):
         width = self.FromDIP(width)
@@ -545,6 +661,7 @@ class MainFrame(wx.Frame):
         newRowIndex = self.metric_table.GetItemCount()
         self.metric_table.InsertItem(newRowIndex, image_name)
         self._stripe(self.metric_table)
+        self._refresh_frozen_names()
         return newRowIndex
 
     def update_table_with_zones(self, image_name, metric_column, value, zone_stats=None, num_zones=0):
@@ -560,8 +677,13 @@ class MainFrame(wx.Frame):
         if columnIndex < 0:
             return
         
-        # Write metric value
-        self.metric_table.SetItem(rowIndex, columnIndex, f"{value:.4f}")
+        # A metric is a number, but the columns that travel beside one need
+        # not be: TSM's sample side is the word 'bright' or 'dark'.
+        try:
+            cellText = "%.4f" % float(value)
+        except (TypeError, ValueError):
+            cellText = str(value)
+        self.metric_table.SetItem(rowIndex, columnIndex, cellText)
         self._record_value(self._metric_values, image_name, metric_column, value)
         
         if zone_stats:
@@ -839,8 +961,10 @@ class MainFrame(wx.Frame):
             self.tables_splitter.Unsplit()
 
         if self.metric_table:
-            self.metric_table.Destroy()
             self.metric_table = None
+            self.metric_names = None
+            self.metric_pane.Destroy()
+            self.metric_pane = None
 
         if self.mask_table:
             self.mask_table.Destroy()
@@ -1697,6 +1821,38 @@ class MainFrame(wx.Frame):
         return maskCache
 
 
+    @staticmethod
+    def _zones_outside(zones, shape):
+        """The zones that do not fit whole inside an image of this shape.
+
+        A rectangle drawn on one image is reused on the next, and numpy does
+        not complain when a slice runs past an edge: it returns a truncated
+        array, or an empty one. Empty gives NaN from every statistic and a
+        ValueError from PV and from Legendre; truncated gives a number read
+        over a smaller patch than the one the other images reported, which is
+        worse, because it looks like a measurement. Neither belongs in a table
+        whose whole point is the same region across images."""
+        imageRows, imageCols = shape[0], shape[1]
+        outside = []
+        for index, (xMin, xMax, yMin, yMax) in enumerate(zones, start=1):
+            if (xMin < 0 or yMin < 0 or xMax > imageCols or yMax > imageRows
+                    or xMax <= xMin or yMax <= yMin):
+                outside.append(index)
+        return outside
+
+    def _skip_zones_outside(self, zones, shape):
+        """Skip with the reason when any zone misses this image; else None."""
+        outside = self._zones_outside(zones, shape)
+        if not outside:
+            return None
+        return self._skip(
+            "%d of %d zones fall outside this %d x %d image (zone%s %s): the "
+            "zones were drawn on an image of another size, so the region "
+            "measured here would not be the one the other images report"
+            % (len(outside), len(zones), shape[1], shape[0],
+               "" if len(outside) == 1 else "s",
+               ", ".join(str(number) for number in outside)))
+
     def _skip(self, reason):
         """Record WHY a metric could not be computed, and return None."""
         # Discarding the exception made a cancelled dialog look like a bug.
@@ -1750,6 +1906,8 @@ class MainFrame(wx.Frame):
                 # The unwrapped copy when the user allowed it, like every other
                 # zone metric; see _precalculate_masks.
                 zoneSample = masks_cache.get('zone_sample', sample)
+                if self._zones_outside(zones, zoneSample.shape):
+                    return self._skip_zones_outside(zones, zoneSample.shape)
 
                 try:
                     result = metricFunction(zoneSample, mask=None, manual=True, num_zones=zoneCount,
@@ -1829,6 +1987,11 @@ class MainFrame(wx.Frame):
             # Unwrapped copy if the user asked for it in _precalculate_masks
             zoneSample = masks_cache.get('zone_sample', sample)
 
+            # Before anything is measured: a zone that misses this image is
+            # not a smaller zone, it is a different one.
+            if self._zones_outside(zones, zoneSample.shape):
+                return self._skip_zones_outside(zones, zoneSample.shape)
+
             # Calculate metric in each zone
             values = []
             zoneStats = []
@@ -1882,16 +2045,19 @@ class MainFrame(wx.Frame):
             
             parameters = inspect.signature(metricFunction).parameters
             tsmThreshold = None
+            tsmSampleIsBright = None
             
             try:
                 if metric_id.startswith('tsm_'):
-                    tsmThreshold = self._get_tsm_threshold(
+                    answer = self._get_tsm_threshold(
                         image_name, processedSample, needsUnwrap)
-                    if tsmThreshold is None:
+                    if answer is None:
                         return self._skip(
                             "the TSM threshold dialog was cancelled")
+                    tsmThreshold, tsmSampleIsBright = answer
                     value = metricFunction(processedSample, use_unwrap=False,
-                                        threshold=tsmThreshold)
+                                           threshold=tsmThreshold,
+                                           sample_is_bright=tsmSampleIsBright)
                 elif 'use_unwrap' in parameters:
                     # Already unwrapped above: asking again would unwrap twice.
                     value = metricFunction(processedSample, use_unwrap=False)
@@ -1903,12 +2069,15 @@ class MainFrame(wx.Frame):
                 
                 self.update_table_with_zones(image_name, tableColumn, value)
                 if tsmThreshold is not None:
-                    # The level is half of the measurement: the percentage
-                    # cannot be reproduced without the threshold it came from,
-                    # and the operator chooses that level per image.
+                    # The level and the side are the measurement's other half:
+                    # the percentage cannot be reproduced without them, and the
+                    # operator chooses both, per image.
                     self.update_table_with_zones(
                         image_name, self._threshold_column(tableColumn),
                         tsmThreshold)
+                    self.update_table_with_zones(
+                        image_name, self._sample_side_column(tableColumn),
+                        "bright" if tsmSampleIsBright else "dark")
                 return value
             except Exception as error:
                 return self._skip(f"{type(error).__name__}: {error}")
@@ -1936,6 +2105,13 @@ class MainFrame(wx.Frame):
         # the two TSM variants keep their own level, which is what they get.
         return metric_column.split(' [')[0] + " Threshold"
 
+    @staticmethod
+    def _sample_side_column(metric_column):
+        """The column saying which side of the threshold was counted."""
+        # 'TSM_Global [%]' -> 'TSM_Global Sample side'. Beside the level, since
+        # the two together are what makes the percentage reproducible.
+        return metric_column.split(' [')[0] + " Sample side"
+
     def _sample_fingerprint(self, sample):
         """Cheap fingerprint telling whether an image's phase data changed."""
         pixels = np.ascontiguousarray(sample)
@@ -1952,21 +2128,27 @@ class MainFrame(wx.Frame):
     
     
     def _get_tsm_threshold(self, image_name, sample, unwrapped):
-        """Where to binarise for TSM, asked once per image and reused."""
-        # The formula fixes everything but the threshold; a mean read ~50 %.
+        """Where to binarize for TSM and which side is the sample.
+
+        Asked once per image and reused. Returns (threshold, sample_is_bright),
+        or None when the dialog was cancelled. The side travels with the level
+        because the definition needs both: the same threshold reports the
+        sample or its complement depending on which side is counted."""
         cacheKey = (image_name, bool(unwrapped))
         fingerprint = self._sample_fingerprint(sample)
 
         cached = self._cache.tsm_thresholds.get(cacheKey)
         if cached is not None and cached[0] == fingerprint:
-            return cached[1]
+            return cached[1], cached[2]
 
-        tsmThreshold = ask_tsm_threshold(self, sample, image_name)
-        if tsmThreshold is None:
+        answer = ask_tsm_threshold(self, sample, image_name)
+        if answer is None:
             return None
 
-        self._cache.tsm_thresholds[cacheKey] = (fingerprint, tsmThreshold)
-        return tsmThreshold
+        tsmThreshold, sampleIsBright = answer
+        self._cache.tsm_thresholds[cacheKey] = (fingerprint, tsmThreshold,
+                                                sampleIsBright)
+        return tsmThreshold, sampleIsBright
 
     def _get_unwrapped_sample(self, image_name, sample):
         """Unwrap a phase image ONCE per image and reuse the result."""

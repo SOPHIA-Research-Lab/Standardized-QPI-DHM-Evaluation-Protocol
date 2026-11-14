@@ -16,7 +16,7 @@ class MetricSelectionDialog(wx.Dialog):
         self.checkboxes = {}
 
         self._create_ui()
-        self.Centre()
+        self.Center()
     
     def _create_ui(self):
         """Create the dialog UI with checkboxes."""
@@ -68,6 +68,8 @@ class MetricSelectionDialog(wx.Dialog):
         okCancelSizer.AddButton(okButton)
         okCancelSizer.AddButton(cancelButton)
         okCancelSizer.Realize()
+        # Enter applies the selection.
+        okButton.SetDefault()
         
         mainSizer.Add(okCancelSizer, 0, wx.ALL | wx.ALIGN_CENTER, 10)
 

@@ -54,7 +54,7 @@ def _fwhm_from_values(values: np.ndarray, bins: int = 100) -> float:
     if not np.any(counts):
         return np.nan
 
-    binCentres = 0.5 * (binEdges[:-1] + binEdges[1:])
+    binCenters = 0.5 * (binEdges[:-1] + binEdges[1:])
     peakIndex = int(np.argmax(counts))
     peakHeight = float(counts[peakIndex])
     if peakHeight <= 0:
@@ -65,8 +65,8 @@ def _fwhm_from_values(values: np.ndarray, bins: int = 100) -> float:
     leftCrossing = None
     for binIndex in range(peakIndex, 0, -1):
         if counts[binIndex - 1] <= halfHeight <= counts[binIndex]:
-            xLow, yLow = binCentres[binIndex - 1], counts[binIndex - 1]
-            xHigh, yHigh = binCentres[binIndex], counts[binIndex]
+            xLow, yLow = binCenters[binIndex - 1], counts[binIndex - 1]
+            xHigh, yHigh = binCenters[binIndex], counts[binIndex]
             fraction = (halfHeight - yLow) / (yHigh - yLow + 1e-12)
             leftCrossing = xLow + fraction * (xHigh - xLow)
             break
@@ -74,8 +74,8 @@ def _fwhm_from_values(values: np.ndarray, bins: int = 100) -> float:
     rightCrossing = None
     for binIndex in range(peakIndex, len(counts) - 1):
         if counts[binIndex] >= halfHeight >= counts[binIndex + 1]:
-            xLow, yLow = binCentres[binIndex], counts[binIndex]
-            xHigh, yHigh = binCentres[binIndex + 1], counts[binIndex + 1]
+            xLow, yLow = binCenters[binIndex], counts[binIndex]
+            xHigh, yHigh = binCenters[binIndex + 1], counts[binIndex + 1]
             fraction = (halfHeight - yLow) / (yHigh - yLow + 1e-12)
             rightCrossing = xLow + fraction * (xHigh - xLow)
             break
@@ -218,7 +218,7 @@ def legendre_background(phase, mask=None, manual=False, num_zones=2,
 
 def _mask_on_grid(mask, grid_rows, grid_cols):
     """The background mask sampled onto the coarse grid the low-pass step leaves."""
-    # Nearest neighbour at each block centre: no interpolation, so it stays boolean.
+    # Nearest neighbor at each block center: no interpolation, so it stays boolean.
     rowIndex = np.minimum(((np.arange(grid_rows) + 0.5) * mask.shape[0]
                            / grid_rows).astype(int), mask.shape[0] - 1)
     colIndex = np.minimum(((np.arange(grid_cols) + 0.5) * mask.shape[1]
@@ -230,17 +230,17 @@ def _low_pass_phase(phase, limit):
     """The smooth part of a phase map: its spectrum cropped around zero frequency."""
     spectrum = fftshift(fft2(ifftshift(phase)))
     fftRows, fftCols = spectrum.shape
-    centreRow, centreCol = int(round(fftRows / 2)), int(round(fftCols / 2))
+    centerRow, centerCol = int(round(fftRows / 2)), int(round(fftCols / 2))
 
-    spectrum = spectrum[centreRow - limit:centreRow + limit,
-                        centreCol - limit:centreCol + limit]
-    # ifft2 normalises by the CROPPED size, so the crop scales the phase up.
+    spectrum = spectrum[centerRow - limit:centerRow + limit,
+                        centerCol - limit:centerCol + limit]
+    # ifft2 normalizes by the CROPPED size, so the crop scales the phase up.
     cropScale = (spectrum.shape[0] / fftRows) * (spectrum.shape[1] / fftCols)
     return ifftshift(ifft2(fftshift(spectrum))).real * cropScale
 
 
 def _process_legendre_zone(zone_phase, limit, order_max, UsePCA, mask=None):
-    """Project one zone of the phase map onto the normalised Legendre basis."""
+    """Project one zone of the phase map onto the normalized Legendre basis."""
     # In phase throughout: the app converts to phase on load and never wraps.
     smoothPhase = _low_pass_phase(zone_phase, limit)
 
@@ -265,7 +265,7 @@ def _process_legendre_zone(zone_phase, limit, order_max, UsePCA, mask=None):
     rowCount, colCount, termCount = polynomials.shape
     basis = polynomials.reshape(rowCount * colCount, termCount)
 
-    # Normalise the basis so each term has unit norm over the grid.
+    # Normalize the basis so each term has unit norm over the grid.
     innerProducts = basis.T @ basis * cellArea
     basis = basis / np.sqrt(np.diag(innerProducts))
     phaseVector = smoothPhase.reshape(-1, 1)
@@ -314,8 +314,8 @@ def _optimize_piston(phase, coeffs, limit, order_max, UsePCA, mask=None):
     for piston in candidatePistons:
         trialCoeffs = coeffs.copy()
         trialCoeffs[0] = piston
-        normalisedCoeffs = trialCoeffs / np.sqrt(basisNorms)
-        wavefront = np.sum((normalisedCoeffs[:, np.newaxis]) * basis.T, axis=0)
+        normalizedCoeffs = trialCoeffs / np.sqrt(basisNorms)
+        wavefront = np.sum((normalizedCoeffs[:, np.newaxis]) * basis.T, axis=0)
         # Plain subtraction: both sides are phase, so there is nothing to unwrap.
         residualPhase = smoothPhase - wavefront.reshape(rowCount, colCount)
         residualVariances.append(np.var(residualPhase if backgroundPixels is None

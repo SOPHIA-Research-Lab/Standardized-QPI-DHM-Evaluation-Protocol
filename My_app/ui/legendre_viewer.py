@@ -30,12 +30,12 @@ def coefficient_figure(coefficients, scaleFactor=1.0):
     axes.set_facecolor(SURFACE)
 
     # The sign is part of the reading, so the two poles of a pair carry it.
-    barColours = [POSITIVE if coefficient >= 0 else NEGATIVE for coefficient in values]
-    axes.bar(indices, values, width=0.68, color=barColours,
+    barColors = [POSITIVE if coefficient >= 0 else NEGATIVE for coefficient in values]
+    axes.bar(indices, values, width=0.68, color=barColors,
              edgecolor=SURFACE, linewidth=2)
     axes.axhline(0, color=INK_SOFT, linewidth=1.0)
 
-    # Every bar is labelled: the exact number is why this panel exists.
+    # Every bar is labeled: the exact number is why this panel exists.
     for index, value in zip(indices, values):
         axes.annotate("%.4f" % value, (index, value),
                       xytext=(0, 4 if value >= 0 else -4),
@@ -59,11 +59,11 @@ def coefficient_figure(coefficients, scaleFactor=1.0):
 
 def surface_image(surface):
     """The reconstructed surface as a wx.Image, in viridis."""
-    colourMap = matplotlib.colormaps['viridis']
+    colorMap = matplotlib.colormaps['viridis']
     surfaceRange = float(surface.max() - surface.min())
-    normalised = ((surface - surface.min())
+    normalized = ((surface - surface.min())
                   / (surfaceRange if surfaceRange > 1e-12 else 1.0))
-    rgbPixels = (colourMap(normalised)[:, :, :3] * 255).astype(np.uint8)
+    rgbPixels = (colorMap(normalized)[:, :, :3] * 255).astype(np.uint8)
 
     height, width = rgbPixels.shape[:2]
     image = wx.Image(width, height)
@@ -132,7 +132,7 @@ def show_legendre_reconstruction(surface, coefficients, parent=None):
     desktop = wx.GetClientDisplayRect()
     dialog.SetSize(wx.Size(min(dialog.GetSize().width, desktop.width),
                            min(dialog.GetSize().height, desktop.height)))
-    dialog.Centre()
+    dialog.Center()
 
     dialog.ShowModal()
     dialog.Destroy()

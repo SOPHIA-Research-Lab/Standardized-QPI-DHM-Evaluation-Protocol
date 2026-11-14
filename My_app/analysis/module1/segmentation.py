@@ -1,7 +1,7 @@
 """Background segmentation for Module I.
 
 Everything here decides WHICH pixels are background. None of it touches the
-values the metrics read: the filters run on a normalised copy used only to
+values the metrics read: the filters run on a normalized copy used only to
 choose the mask, and the metrics are always given the original phase. Keeping
 that separation is what lets the segmentation be tuned without the measured
 numbers moving.
@@ -48,7 +48,7 @@ class Recipe:
     """How the background mask is obtained. Shared by every image of a batch,
     except for `manual_threshold`, which is the one value tuned per image."""
 
-    # Preprocessing, applied to the normalised copy only. 0 means "off".
+    # Preprocessing, applied to the normalized copy only. 0 means "off".
     median: int = 0              # radius, px
     tophat: int = 0              # radius, px
 
@@ -157,7 +157,7 @@ def _odd(value) -> int:
     return value if value % 2 == 1 else value + 1
 
 
-def normalise(image: np.ndarray) -> np.ndarray:
+def normalize(image: np.ndarray) -> np.ndarray:
     """The phase mapped onto [0, 1] by its own extremes, for thresholding only."""
     image = np.asarray(image, dtype=np.float32)
     low, high = float(np.min(image)), float(np.max(image))
@@ -166,7 +166,7 @@ def normalise(image: np.ndarray) -> np.ndarray:
     return (image - low) / (high - low)
 
 
-def bright_sample(normalised: np.ndarray) -> bool:
+def bright_sample(normalized: np.ndarray) -> bool:
     """Whether the sample sits above the background, from the histogram's skew.
 
     The sample is the minority, so it lives in a tail: a right tail means it is
@@ -174,21 +174,21 @@ def bright_sample(normalised: np.ndarray) -> bool:
     skew needs no threshold, which is why it survives a field with residual
     curvature -- it was right on 10 of 10 synthetic cases where deciding from
     an Otsu split was wrong on one."""
-    data = np.asarray(normalised, dtype=np.float64).ravel()
-    centred = data - data.mean()
-    spread = centred.std()
+    data = np.asarray(normalized, dtype=np.float64).ravel()
+    centerd = data - data.mean()
+    spread = centerd.std()
     if spread < 1e-12:
         return True
-    return float((centred ** 3).mean() / (spread ** 3)) > 0
+    return float((centerd ** 3).mean() / (spread ** 3)) > 0
 
 
-def preprocess(normalised: np.ndarray, recipe: Recipe,
+def preprocess(normalized: np.ndarray, recipe: Recipe,
                sample_is_bright: bool = True) -> np.ndarray:
     """Apply the recipe's filters, in the order that makes them worth having.
 
     The median first, so the top-hat is not asked to tell speckle from
     structure; the top-hat last, because it is what reshapes the histogram."""
-    filtered = np.asarray(normalised, dtype=np.float32)
+    filtered = np.asarray(normalized, dtype=np.float32)
 
     if recipe.median >= 1:
         # Isolated phase outliers vanish without the edges moving.
@@ -204,9 +204,9 @@ def preprocess(normalised: np.ndarray, recipe: Recipe,
         # Which tail the sample lives in decides which top-hat keeps it.
         operation = cv2.MORPH_TOPHAT if sample_is_bright else cv2.MORPH_BLACKHAT
         filtered = cv2.morphologyEx(filtered, operation, kernel)
-        # The residual lives on a different scale; renormalising keeps the
+        # The residual lives on a different scale; renormalizing keeps the
         # threshold slider meaning the same thing from one recipe to the next.
-        filtered = normalise(filtered)
+        filtered = normalize(filtered)
 
     return np.clip(filtered, 0.0, 1.0)
 
@@ -220,7 +220,7 @@ def _median_large(image: np.ndarray, size: int) -> np.ndarray:
 
 
 def threshold(filtered: np.ndarray, recipe: Recipe):
-    """Binarise the filtered copy. Returns (above_threshold, level)."""
+    """Binarize the filtered copy. Returns (above_threshold, level)."""
     if recipe.method == "manual":
         level = float(np.clip(recipe.manual_threshold, 0.0, 1.0))
         return filtered > level, level
@@ -246,11 +246,11 @@ AMBIGUOUS_MARGIN = 0.10
 def build_mask(image: np.ndarray, recipe: Recipe) -> dict:
     """Run the whole recipe. Returns every stage, so a preview can show them.
 
-    Keys: normalised, filtered, sample, background, level, bright_sample,
+    Keys: normalized, filtered, sample, background, level, bright_sample,
     ambiguous. `image` is the phase and is never modified."""
-    normalised = normalise(image)
-    brightSample = bright_sample(normalised)
-    filtered = preprocess(normalised, recipe, brightSample)
+    normalized = normalize(image)
+    brightSample = bright_sample(normalized)
+    filtered = preprocess(normalized, recipe, brightSample)
     above, level = threshold(filtered, recipe)
 
     # The background is the LARGER region, so the sample is whichever side of
@@ -297,7 +297,7 @@ def build_mask(image: np.ndarray, recipe: Recipe) -> dict:
         sample[:, -margin:] = True
 
     return {
-        "normalised": normalised,
+        "normalized": normalized,
         "filtered": filtered,
         "sample": sample,
         "background": ~sample,

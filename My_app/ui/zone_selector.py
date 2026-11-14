@@ -62,10 +62,10 @@ class WxRectangleSelectorDialog(wx.Dialog):
         
         phaseMin, phaseMax = self.image.min(), self.image.max()
         if phaseMax - phaseMin > 1e-12:
-            normalisedPhase = (self.image - phaseMin) / (phaseMax - phaseMin)
+            normalizedPhase = (self.image - phaseMin) / (phaseMax - phaseMin)
         else:
-            normalisedPhase = np.zeros_like(self.image)
-        self.img_u8 = (normalisedPhase * 255).astype(np.uint8)
+            normalizedPhase = np.zeros_like(self.image)
+        self.img_u8 = (normalizedPhase * 255).astype(np.uint8)
         
         screenSize = wx.GetDisplaySize()
         maxWidth = int(screenSize[0] * 0.8)
@@ -84,7 +84,7 @@ class WxRectangleSelectorDialog(wx.Dialog):
         desktop = wx.GetClientDisplayRect()
         self.SetSize((min(self.display_w + self.FromDIP(40), desktop.width),
                       min(self.display_h + self.FromDIP(120), desktop.height)))
-        self.Centre()
+        self.Center()
         
         self._build_ui()
         self._update_display()
@@ -134,6 +134,12 @@ class WxRectangleSelectorDialog(wx.Dialog):
         
         self.SetSizer(mainSizer)
         
+        # Enter finishes, Escape cancels. The buttons carry their own ids, so
+        # the dialog has to be told which one each key stands for.
+        self.btn_finish.SetDefault()
+        self.SetAffirmativeId(self.btn_finish.GetId())
+        self.SetEscapeId(self.btn_cancel.GetId())
+
         self.btn_undo.Bind(wx.EVT_BUTTON, self._on_undo)
         self.btn_clear.Bind(wx.EVT_BUTTON, self._on_clear)
         self.btn_finish.Bind(wx.EVT_BUTTON, self._on_finish)

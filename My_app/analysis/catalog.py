@@ -80,7 +80,7 @@ METRIC_MAP = {
     'laplacian_unwrapped': (gp.laplacian_energy, 'LE_Unwrapped [rad^2/px^4]', True),
 
     # Spatial Frequency
-    # Dimensionless: the phase is normalised to [0,1] before the differences.
+    # Dimensionless: the phase is normalized to [0,1] before the differences.
     'spatial_freq_global': (gp.spatial_frequency_global, 'SF_Global', False),
     'spatial_freq_unwrapped': (gp.spatial_frequency_global, 'SF_Unwrapped', True),
 
@@ -123,7 +123,7 @@ _MODULE_BY_PACKAGE = {
 
 
 def module_of(metric_id):
-    """The module number a metric belongs to, or None if it is not catalogued."""
+    """The module number a metric belongs to, or None if it is not cataloged."""
     entry = METRIC_MAP.get(metric_id)
     if entry is None:
         return None
