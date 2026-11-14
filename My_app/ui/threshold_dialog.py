@@ -521,10 +521,26 @@ class WxThresholdDialog(wx.Dialog):
         self._schedule_preview()
 
     def _on_method(self, event):
+        previousMethod = self.recipe.method
         self._collect()
+        if self.recipe.method == "manual" and previousMethod != "manual":
+            # The slider was reporting the level Otsu or Triangle landed on,
+            # and Manual is usually picked to nudge exactly that level. Start
+            # from it rather than jumping back to the level set before, which
+            # would mean reading the number off the screen and typing it in.
+            self._seed_manual_from_last_level()
         self._sync_slider()
         self.Layout()
         self._schedule_preview()
+
+    def _seed_manual_from_last_level(self):
+        """Carry the automatic level into the manual one, when there is one."""
+        if self._last_result is None:
+            return
+        level = self._last_result["level"]
+        if level is None or not np.isfinite(level):
+            return
+        self.recipe.manual_threshold = float(np.clip(level, 0.0, 1.0))
 
     def _on_slider(self, event):
         """Follow the hand with the number; make the heavy part wait."""

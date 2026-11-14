@@ -22,6 +22,7 @@ from ui import icons
 import subprocess
 import sys
 import os
+import shutil
 import hashlib
 import inspect
 
@@ -1126,6 +1127,82 @@ class MainFrame(wx.Frame):
                     )
                     return
                 self.export_all_tables("excel")    
+
+    def on_save_image(self, event):
+        """Save a copy of what the tab on screen holds.
+
+        A bundled sample lives in the application's own folder, so copying it
+        out is how another reconstruction gets run on it. When the tab came
+        from a file, THAT file is
+        copied byte for byte: the picture on screen is an 8-bit rendering,
+        rescaled for display in the .mat cases, so writing it back would hand
+        over something that is no longer the measurement. Only a tab with no
+        file behind it (an ImageJ result) is written from the picture."""
+        page = self.notebook.get_current_page() if self.notebook else None
+        if page is None:
+            wx.MessageBox("There is no image open to save.",
+                          "Nothing to Save", wx.OK | wx.ICON_INFORMATION)
+            return
+
+        sourcePath = getattr(page, 'source_path', None)
+        if sourcePath and not os.path.exists(sourcePath):
+            sourcePath = None
+
+        if sourcePath:
+            defaultName = os.path.basename(sourcePath)
+            extension = os.path.splitext(defaultName)[1].lower()
+            wildcard = "%s file (*%s)|*%s" % (
+                extension.lstrip('.').upper(), extension, extension)
+        else:
+            if getattr(page, 'pil_img', None) is None:
+                wx.MessageBox("This tab has no image behind it.",
+                              "Nothing to Save", wx.OK | wx.ICON_INFORMATION)
+                return
+            defaultName = self._safe_file_name(self._current_tab_title()) + ".png"
+            wildcard = ("PNG file (*.png)|*.png|"
+                        "TIFF file (*.tif)|*.tif|"
+                        "BMP file (*.bmp)|*.bmp")
+
+        with wx.FileDialog(self, "Save Image As", defaultFile=defaultName,
+                           wildcard=wildcard,
+                           style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as dialog:
+            if dialog.ShowModal() == wx.ID_CANCEL:
+                return
+            targetPath = dialog.GetPath()
+
+        try:
+            if sourcePath:
+                if os.path.abspath(targetPath) == os.path.abspath(sourcePath):
+                    wx.MessageBox(
+                        "That is the file itself.\n\nChoose another name or "
+                        "another folder.", "Same File", wx.OK | wx.ICON_WARNING)
+                    return
+                shutil.copyfile(sourcePath, targetPath)
+            else:
+                page.pil_img.save(targetPath)
+        except Exception as error:
+            wx.MessageBox("Could not save the image:\n\n%s: %s"
+                          % (type(error).__name__, error),
+                          "Error", wx.OK | wx.ICON_ERROR)
+            return
+
+        self.SetStatusText("Saved to %s" % targetPath)
+
+    def _current_tab_title(self):
+        """The text on the tab in front, or a fallback name."""
+        pageIndex = self.notebook.GetSelection() if self.notebook else wx.NOT_FOUND
+        if pageIndex == wx.NOT_FOUND:
+            return "image"
+        return self.notebook.GetPageText(pageIndex)
+
+    @staticmethod
+    def _safe_file_name(title):
+        """A tab title with the characters Windows refuses taken out."""
+        # Tab titles carry things like 'field.mat [phase]', and a path cannot.
+        cleaned = "".join(
+            "_" if character in '<>:"/|?*' + chr(92) else character
+            for character in title).strip()
+        return cleaned or "image"
 
     def on_close(self, event):
         self.Destroy()

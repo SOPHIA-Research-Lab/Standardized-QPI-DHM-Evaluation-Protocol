@@ -37,6 +37,9 @@ def open_image(parent, notebook):
                     page = notebook.add_image_tab(displayImage, os.path.basename(path))
                     page.phase = phase
                     page.is_mat_complex = False
+                    # Kept so File > Save Image As can hand back the file
+                    # itself rather than the 8-bit picture drawn from it.
+                    page.source_path = path
 
                 elif extension == ".mat":
                     matData = loadmat(path)
@@ -56,11 +59,13 @@ def open_image(parent, notebook):
                         # must not go through np.angle, which would collapse it
                         # onto 0 and pi according to its sign alone.
                         if np.iscomplexobj(variable):
-                            process_complex_field(notebook, variable,
-                                                  os.path.basename(path), fieldName)
+                            page = process_complex_field(notebook, variable,
+                                                         os.path.basename(path), fieldName)
                         else:
-                            process_phase_array(notebook, variable,
-                                                os.path.basename(path), fieldName)
+                            page = process_phase_array(notebook, variable,
+                                                       os.path.basename(path), fieldName)
+                        if page is not None:
+                            page.source_path = path
 
                     dialog.Destroy()
 

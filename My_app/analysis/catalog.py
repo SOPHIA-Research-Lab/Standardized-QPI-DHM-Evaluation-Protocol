@@ -59,6 +59,10 @@ METRIC_MAP = {
     'mmm_global': (gp.maximum_minus_minimum, 'PV_Global [rad]', False),
     'mmm_unwrapped': (gp.maximum_minus_minimum, 'PV_Global_U [rad]', True),
 
+    # STD: the same dispersion as PV, read from every pixel instead of two.
+    'std_global': (gp.std_global, 'STD_Global [rad]', False),
+    'std_global_unwrapped': (gp.std_global, 'STD_Global_U [rad]', True),
+
     # Phase Gradient Metric: the local gradient, everywhere.
     'gradient_global': (gp.phase_gradient_prewitt, 'PGM_Global [rad/px]', False),
     'gradient_unwrapped': (gp.phase_gradient_prewitt, 'PGM_Unwrapped [rad/px]', True),
