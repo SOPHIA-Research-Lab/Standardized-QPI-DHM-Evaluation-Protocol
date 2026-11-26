@@ -192,7 +192,7 @@ My_app/
 ├── User_manual/
 │   └── User_Manual.docx
 │
-├── app.py              # ⭐ Main entry point — run this file to launch PhaseMark
+├── app.py              # Main entry point — run this file to launch PhaseMark
 ├── app.spec            # PyInstaller build file (produces PhaseMark.exe)
 ├── detached_notebook.py
 └── requirements.txt
