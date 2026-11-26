@@ -13,8 +13,9 @@ def create(parent):
 
 def show_help(parent):
     helpText = (
-        "Standardized QPI-DHM Evaluation Protocol - Help\n\n"
-        "This application evaluates quantitative phase imaging (QPI) in Digital "
+        "PhaseMark - Help\n\n"
+        "PhaseMark implements the standardized QPI-DHM evaluation protocol. "
+        "It evaluates quantitative phase imaging (QPI) in Digital "
         "Holographic Microscopy (DHM). It expects a COMPENSATED PHASE MAP as "
         "input, not a hologram: the background segmentation thresholds phase "
         "values, and on an interference pattern it would segment the fringes.\n\n"
@@ -26,18 +27,88 @@ def show_help(parent):
         "(np.angle) and the amplitude is shown for viewing only. This is the more "
         "faithful route, since an 8-bit file carries only 256 phase levels.\n"
         "   -  MATLAB .mat holding a real array: taken to be the phase in "
-        "radians and used as it stands, with no conversion.\n\n"
+        "radians and used as it stands, with no conversion.\n"
+        "   -  32-bit float TIFF: taken to be the phase in radians and used as "
+        "it stands, like a real .mat array. This is what File > Save Image As "
+        "writes for an ImageJ tab, and what ImageJ writes for a 32-bit "
+        "image.\n"
+        "   -  NumPy .npy holding a 2-D array: the same rule as a .mat "
+        "variable. Complex is a field, whose phase is kept and amplitude "
+        "shown; real is the phase in radians, used as it stands. Arrays of "
+        "Python objects are refused, since loading them would run code from "
+        "the file.\n"
+        "   -  Headerless .raw / .bin: only the numbers, so a dialog asks for "
+        "width, height, data type, byte order and any header to skip. It is "
+        "prefilled from the file name (fase_640x480_float32.raw), and OK stays "
+        "disabled until the layout accounts for every byte of the file. 32- "
+        "and 64-bit float are the phase in radians; 8-bit is gray levels, "
+        "mapped onto [-pi, pi].\n\n"
 
-        "Hologram Samples menu\n"
-        "   The files in this menu are HOLOGRAMS, not phase maps. They are "
-        "included so that a reconstruction and compensation algorithm can be "
-        "run on them and the quality of its result evaluated here; their "
-        "filenames record the magnification, the wavelength, the pixel pitch "
-        "and, for the non-telecentric ones, the defocus distance.\n"
+        "Samples menu\n"
+        "   Samples > Holograms (Telecentric, Non-telecentric): these files are "
+        "HOLOGRAMS, not phase maps. They are included so that a reconstruction "
+        "and compensation algorithm can be run on them and the quality of its "
+        "result evaluated here; their filenames record the magnification, the "
+        "wavelength, the pixel pitch and, for the non-telecentric ones, the "
+        "defocus distance.\n"
         "   While the active tab holds one of them, Modules I to III are "
         "disabled: on an interference pattern they would measure the fringes. "
         "Open the compensated phase map with File > Open and they come back. "
-        "Module IV is unaffected, since it does not read the workspace.\n\n"
+        "Module IV is unaffected, since it does not read the workspace.\n"
+        "   Samples > Reconstruction Samples: COMPENSATED phase maps, ready to be measured "
+        "with every module. Their names give the object and the compensation "
+        "method (for example Drosophila_PCA), so two methods applied to the "
+        "same object can be compared directly. They open as File > Open would "
+        "open the same file. The submenu lists whatever is in the folder "
+        "'Samples compensated phase', so a file added there appears in it.\n\n"
+
+        "Toolbar\n"
+        "   The most used actions, one click away: Open, Save, ImageJ, the "
+        "four modules (Background, Global, Ground truth, Complexity), Clear "
+        "and Help. Hover a button for what it does. Tools that do not fit the "
+        "window fold behind the chevron at the right end of the bar. The "
+        "arrow beside it, View > Toolbar and Ctrl+T all hide the bar and "
+        "bring it back. While the active tab holds a hologram the module "
+        "buttons are grayed out together with the Analysis menu.\n\n"
+
+        "File menu\n"
+        "   -  Open (Ctrl+O): load a phase image or .mat file.\n"
+        "   -  Save Image As (Ctrl+Shift+S): save a copy of the file shown in "
+        "the current tab. This is how a bundled hologram sample is taken out "
+        "to a reconstruction program. A tab holding a phase can also write "
+        "that phase, in radians, as a 32-bit TIFF or as a headerless .raw / "
+        ".bin (float32, little-endian). A .raw/.bin cannot record its own "
+        "size, so the size goes in its name (fase_640x480_float32.raw); "
+        "File > Open reads it back from there.\n"
+        "   -  Save Results (Ctrl+S): export the metric and mask tables to "
+        "Excel. It saves the RESULTS, not the image on screen.\n"
+        "   -  Clear (Ctrl+L): close every image and drop the tables.\n\n"
+
+        "ImageJ\n"
+        "   ImageJ > Send current image to ImageJ, or the ImageJ button, opens "
+        "ImageJ (Fiji) and sends it the PHASE of the active tab as a 32-bit "
+        "float image, in radians: the true phase of a .mat file, not the "
+        "picture drawn for it (for a complex field that picture is the "
+        "amplitude). The pixel values ImageJ shows are radians, and its "
+        "filters and arithmetic run on the phase in float. A hologram, which "
+        "holds no phase, is sent as its 8-bit picture.\n"
+        "   From then on the image is watched, and it comes back into PhaseMark "
+        "as a tab named <image>_ImageJ that keeps two things apart:\n"
+        "   -  What it SHOWS is the image as ImageJ draws it: LUT, contrast and "
+        "overlays included.\n"
+        "   -  What it MEASURES is the 32-bit values behind it, in radians. "
+        "Overlays are not pixels and a LUT or Brightness/Contrast setting is "
+        "only a look, so none of them reaches the metrics. Apply in "
+        "Brightness/Contrast does rewrite the values, and so does any filter.\n"
+        "   The tab follows every change, to the data or only to the look. If "
+        "the image is converted away from 32-bit in ImageJ (Image > Type), it "
+        "no longer holds the phase: a warning says so, and until it is 32-bit "
+        "again its metrics read the gray levels mapped onto [-pi, pi].\n"
+        "   File > Save Image As on that tab offers both: PNG, TIFF or BMP of "
+        "the image as shown, for a figure, or the phase in radians as a 32-bit "
+        "TIFF or .raw/.bin, which File > Open reads back as phase.\n"
+        "   It needs pyimagej, JPype1 and a Java runtime; without them a "
+        "message says what is missing.\n\n"
 
         "How the background is selected\n"
         "   Metrics in Module I are measured on BACKGROUND pixels only, so a "
@@ -318,10 +389,12 @@ def show_help(parent):
         "Linux or WSL2. The window itself opens anywhere.\n\n"
 
         "Results\n"
-        "   -  One row per image, one column per metric. Tables show 4 decimals; "
-        "exports carry the full precision.\n"
-        "   -  When a run finishes, a summary window shows the same numbers with "
-        "6 decimals, the other way round: one row per metric, one column per "
+        "   -  One row per image, one column per metric. Values are shown with "
+        "up to two decimals (0.12, 3.14, 123.4, 12345), and in scientific "
+        "notation below 0.01 (9.9e-3, 4.0e-5). This is display only: exports "
+        "carry the full precision.\n"
+        "   -  When a run finishes, a summary window shows the same numbers, "
+        "the other way round: one row per metric, one column per "
         "image, so a metric is read across the images along a single line. A "
         "cell with no number is marked there and the reason is listed below the "
         "grid; a blank cell is one the run never reached.\n"
@@ -334,20 +407,26 @@ def show_help(parent):
         "Shortcuts\n"
         "   Ctrl+O  Open image        Ctrl+S  Save results\n"
         "   Ctrl+L  Clear all         Ctrl+Q  Exit\n"
-        "   F1      This help         Alt+key Menu access\n\n"
+        "   Ctrl+T  Toolbar on/off    F1      This help\n"
+        "   Ctrl+Shift+S  Save image as\n"
+        "   Alt+key Menu access\n\n"
 
         "Setup\n"
         "   pip install -r requirements.txt\n"
         "   python app.py\n"
     )
 
-    dialog = wx.Dialog(parent, title="Help",
+    dialog = wx.Dialog(parent, title="PhaseMark - Help",
                        size=wx.Window.FromDIP(wx.Size(720, 600), parent))
     dialog.SetBackgroundColour(wx.Colour(255, 255, 255))
 
     panel = wx.Panel(dialog)
 
     mainSizer = wx.BoxSizer(wx.VERTICAL)
+
+    from ui import icons
+    logoBitmap = wx.StaticBitmap(panel, bitmap=icons.logo(64, dialog))
+    mainSizer.Add(logoBitmap, 0, wx.ALIGN_CENTER | wx.TOP, 10)
 
     textArea = wx.TextCtrl(panel, value=helpText,
                            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL | wx.VSCROLL)

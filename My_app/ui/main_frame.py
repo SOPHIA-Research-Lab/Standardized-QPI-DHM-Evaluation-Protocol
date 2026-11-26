@@ -19,9 +19,11 @@ from ui.legendre_viewer import show_legendre_reconstruction
 from ui.tsm_dialog import ask_tsm_threshold
 from ui.results_dialog import show_results_grid
 from ui import icons
+from ui.number_format import format_value
 import subprocess
 import sys
 import os
+import re
 import shutil
 import hashlib
 import inspect
@@ -31,6 +33,7 @@ class MainFrame(wx.Frame):
     
     def __init__(self, parent, title, size):
         super().__init__(parent, title=title, size=size)
+        self.SetIcons(icons.app_icons())
         self._initialize_components()
         self._setup_menus()
         self._setup_layout()
@@ -128,25 +131,70 @@ class MainFrame(wx.Frame):
         except Exception:
             return  # ImageJ not started or bridge unavailable; silently ignore
         
-        for imageTitle, pilImage in changes:
-            if imageTitle in self.imagej_tab_map:
-                # A tab is already linked to this image: update it
-                pageIndex = self.imagej_tab_map[imageTitle]
-                if pageIndex < self.notebook.GetPageCount():
-                    panel = self.notebook.GetPage(pageIndex)
-                    panel.pil_img = pilImage
-                    self.notebook._update_bitmap(panel.bitmap_ctrl, pilImage, panel.scale_factor)
-                    continue
-            
-            # Not linked yet: create a new tab and register it
+        for reading in changes:
+            self._show_imagej_reading(reading)
+
+    def _imagej_panel(self, image_title):
+        """The tab linked to an ImageJ image, if it is still in the notebook."""
+        panel = self.imagej_tab_map.get(image_title)
+        if panel is None:
+            return None
+        try:
+            if self.notebook.GetPageIndex(panel) != wx.NOT_FOUND:
+                return panel
+        except RuntimeError:
+            pass                      # the tab was closed: its panel is gone
+        del self.imagej_tab_map[image_title]
+        return None
+
+    def _show_imagej_reading(self, reading):
+        """Put one reading of an ImageJ image into its linked tab, or a new one.
+
+        The tab SHOWS the image as ImageJ draws it, LUT and overlays included,
+        and MEASURES the 32-bit values behind it, in radians. When there are
+        none (the image was converted to 8-bit or RGB in ImageJ) the phase is
+        dropped, so the metrics fall back to reading the gray levels, and that
+        is said once rather than left to be discovered in the numbers."""
+        imageTitle = reading['title']
+        pilImage = reading['image']
+        panel = self._imagej_panel(imageTitle)
+
+        if panel is None:
             panel = self.notebook.add_image_tab(pilImage, f"{imageTitle}_ImageJ")
-            self.imagej_tab_map[imageTitle] = self.notebook.GetPageCount() - 1
+            self.imagej_tab_map[imageTitle] = panel
+        else:
+            panel.pil_img = pilImage
+            self.notebook._update_bitmap(panel.bitmap_ctrl, pilImage, panel.scale_factor)
+
+        panel.phase = reading['phase']
+        panel.is_mat_complex = False
+        panel.amplitude = None
+        panel.from_imagej = True
+        self._update_status_image()
+
+        if reading['phase_lost']:
+            if imageTitle not in self._imagej_phase_warned:
+                self._imagej_phase_warned.add(imageTitle)
+                wx.MessageBox(
+                    f"'{imageTitle}' is no longer a 32-bit image in ImageJ, so it "
+                    "no longer holds the phase in radians.\n\n"
+                    "Until it is 32-bit again, the metrics on "
+                    f"'{imageTitle}_ImageJ' read its gray levels mapped onto "
+                    "[-pi, pi], like an 8-bit image file, and are not the phase "
+                    "it was sent with.\n\n"
+                    "To keep the phase, leave the image 32-bit in ImageJ "
+                    "(Image > Type > 32-bit) and avoid Apply in "
+                    "Brightness/Contrast.",
+                    "ImageJ image is not phase anymore",
+                    wx.OK | wx.ICON_WARNING)
+        else:
+            self._imagej_phase_warned.discard(imageTitle)
 
     def _setup_menus(self):
         # Set up the menu bar.
         menuBar = wx.MenuBar()
         menuBar.Append(file_menu.create(self), "&File")
-        menuBar.Append(samples_menu.create(self, self.notebook), "Hologram &Samples")
+        menuBar.Append(samples_menu.create(self, self.notebook), "&Samples")
         menuBar.Append(analysis_menu.create(self), "&Analysis")
         menuBar.Append(self._create_imagej_menu(), "&ImageJ")
         menuBar.Append(self._create_view_menu(), "&View")
@@ -154,7 +202,8 @@ class MainFrame(wx.Frame):
         self.SetMenuBar(menuBar)
         self._setup_toolbar()
 
-        self.imagej_tab_map = {}  # Maps ImageJ image title -> notebook tab index
+        self.imagej_tab_map = {}  # ImageJ image title -> its linked tab (panel)
+        self._imagej_phase_warned = set()  # titles already warned of lost phase
 
         # NOT started here: _ensure_imagej_polling() starts it on demand.
         self.imagej_timer = wx.Timer(self)
@@ -264,7 +313,8 @@ class MainFrame(wx.Frame):
         # raised into the event loop and the button simply did nothing, which
         # is the worst way to fail: silently.
         try:
-            from core.imagej_bridge import show_imagej_gui, pil_to_imageplus
+            from core.imagej_bridge import (show_imagej_gui, pil_to_imageplus,
+                                            phase_to_imageplus, snapshot)
         except ImportError as error:
             wx.MessageBox(
                 "ImageJ support is not available in this Python environment.\n\n"
@@ -279,9 +329,18 @@ class MainFrame(wx.Frame):
         if pilImage is None:
             return
 
+        # The PHASE travels, not the picture on screen: that picture is the
+        # amplitude for a complex field and a min-max stretch for a .mat phase,
+        # and reading either back as [-pi, pi] would change what is measured.
+        # A tab with no phase behind it (a hologram) goes as the 8-bit picture.
+        phase = getattr(page, 'phase', None)
         try:
             show_imagej_gui(parent_window=self)
-            pil_to_imageplus(pilImage, title=imageName, parent_window=self)
+            if phase is not None:
+                phase_to_imageplus(phase, title=imageName, parent_window=self)
+            else:
+                pil_to_imageplus(pilImage, title=imageName, parent_window=self)
+            reading = snapshot(imageName)
         except Exception as error:
             wx.MessageBox(
                 f"ImageJ could not be started.\n\n{type(error).__name__}: {error}",
@@ -289,11 +348,11 @@ class MainFrame(wx.Frame):
             return
 
         self._ensure_imagej_polling()
-        
-        # Only create a linked tab the FIRST time this image is sent
-        if imageName not in self.imagej_tab_map:
-            self.notebook.add_image_tab(pilImage, f"{imageName}_ImageJ")
-            self.imagej_tab_map[imageName] = self.notebook.GetPageCount() - 1
+
+        # The linked tab is filled from ImageJ itself, so it starts out as the
+        # same image and the same values as the window it follows.
+        if reading is not None:
+            self._show_imagej_reading(reading)
 
     def _ensure_imagej_polling(self):
         """Start polling ImageJ for edits, once an image has actually been sent."""
@@ -427,7 +486,14 @@ class MainFrame(wx.Frame):
         phase = getattr(page, 'phase', None)
         if phase is not None:
             paneHeight, columnWidth = phase.shape[:2]
-            source = "complex field" if getattr(page, 'is_mat_complex', False) else "image"
+            if getattr(page, 'from_imagej', False):
+                source = "ImageJ, 32-bit phase"
+            elif getattr(page, 'is_float_tiff', False):
+                source = "32-bit phase"
+            elif getattr(page, 'is_mat_complex', False):
+                source = "complex field"
+            else:
+                source = "image"
             self.SetStatusText("%s  -  %d x %d  -  %s" % (imageName, columnWidth, paneHeight, source), 1)
         else:
             self.SetStatusText(imageName, 1)
@@ -680,7 +746,7 @@ class MainFrame(wx.Frame):
         # A metric is a number, but the columns that travel beside one need
         # not be: TSM's sample side is the word 'bright' or 'dark'.
         try:
-            cellText = "%.4f" % float(value)
+            cellText = format_value(value)
         except (TypeError, ValueError):
             cellText = str(value)
         self.metric_table.SetItem(rowIndex, columnIndex, cellText)
@@ -740,7 +806,7 @@ class MainFrame(wx.Frame):
             try:
                 zoneValue = float(np.mean(zoneValue)) if not np.isscalar(zoneValue) else float(zoneValue)
                 if np.isfinite(zoneValue):
-                    self.metric_table.SetItem(row, col_indices[columnName], f"{zoneValue:.4f}")
+                    self.metric_table.SetItem(row, col_indices[columnName], format_value(zoneValue))
                     imageName = self.metric_table.GetItemText(row, 0)
                     self._record_value(self._metric_values, imageName, columnName, zoneValue)
             except (ValueError, TypeError) as error:
@@ -1253,15 +1319,15 @@ class MainFrame(wx.Frame):
                 self.export_all_tables("excel")    
 
     def on_save_image(self, event):
-        """Save a copy of what the tab on screen holds.
+        """Save what the tab holds: its file, its picture, or its phase.
 
-        A bundled sample lives in the application's own folder, so copying it
-        out is how another reconstruction gets run on it. When the tab came
-        from a file, THAT file is
-        copied byte for byte: the picture on screen is an 8-bit rendering,
-        rescaled for display in the .mat cases, so writing it back would hand
-        over something that is no longer the measurement. Only a tab with no
-        file behind it (an ImageJ result) is written from the picture."""
+        A tab opened from a file can hand that file back byte for byte, which
+        is how a bundled sample gets out to a reconstruction program: the
+        picture on screen is an 8-bit rendering, rescaled for display in the
+        .mat cases, so writing IT back would not be the measurement. A tab
+        with no file behind it (an ImageJ result) offers its picture, as shown.
+        Any tab with a phase can also write that phase, in radians, as a 32-bit
+        TIFF or as headerless .raw/.bin; File > Open reads all three back."""
         page = self.notebook.get_current_page() if self.notebook else None
         if page is None:
             wx.MessageBox("There is no image open to save.",
@@ -1271,37 +1337,74 @@ class MainFrame(wx.Frame):
         sourcePath = getattr(page, 'source_path', None)
         if sourcePath and not os.path.exists(sourcePath):
             sourcePath = None
+        phase = getattr(page, 'phase', None)
+        # A hologram's "phase" is only its gray levels: not worth exporting.
+        if getattr(page, 'is_sample', False):
+            phase = None
 
+        # (label, extension, what to write)
+        options = []
         if sourcePath:
-            defaultName = os.path.basename(sourcePath)
-            extension = os.path.splitext(defaultName)[1].lower()
-            wildcard = "%s file (*%s)|*%s" % (
-                extension.lstrip('.').upper(), extension, extension)
-        else:
-            if getattr(page, 'pil_img', None) is None:
-                wx.MessageBox("This tab has no image behind it.",
-                              "Nothing to Save", wx.OK | wx.ICON_INFORMATION)
-                return
-            defaultName = self._safe_file_name(self._current_tab_title()) + ".png"
-            wildcard = ("PNG file (*.png)|*.png|"
-                        "TIFF file (*.tif)|*.tif|"
-                        "BMP file (*.bmp)|*.bmp")
+            extension = os.path.splitext(sourcePath)[1].lower()
+            options.append(("Copy of the original %s file" % extension.lstrip('.').upper(),
+                            extension, 'copy'))
+        elif getattr(page, 'pil_img', None) is not None:
+            options += [("PNG image, as shown", ".png", 'picture'),
+                        ("TIFF image, as shown", ".tif", 'picture'),
+                        ("BMP image, as shown", ".bmp", 'picture')]
+        if phase is not None:
+            options += [("TIFF 32-bit phase, radians", ".tif", 'tiff32'),
+                        ("RAW phase, float32 little-endian, no header", ".raw", 'raw'),
+                        ("BIN phase, float32 little-endian, no header", ".bin", 'raw')]
+        if not options:
+            wx.MessageBox("This tab has no image behind it.",
+                          "Nothing to Save", wx.OK | wx.ICON_INFORMATION)
+            return
 
-        with wx.FileDialog(self, "Save Image As", defaultFile=defaultName,
+        baseName = (os.path.splitext(os.path.basename(sourcePath))[0] if sourcePath
+                    else self._safe_file_name(self._current_tab_title()))
+        wildcard = "|".join("%s (*%s)|*%s" % (label, extension, extension)
+                            for label, extension, _ in options)
+
+        with wx.FileDialog(self, "Save Image As",
+                           defaultFile=baseName + options[0][1],
                            wildcard=wildcard,
                            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as dialog:
             if dialog.ShowModal() == wx.ID_CANCEL:
                 return
             targetPath = dialog.GetPath()
+            _, extension, kind = options[dialog.GetFilterIndex()]
+
+        # The extension follows the format picked, whatever was typed.
+        # A known extension is swapped (fase.mat -> fase.raw); anything else
+        # is part of the name (fase.v2 -> fase.v2.raw).
+        stem, typedExtension = os.path.splitext(targetPath)
+        if typedExtension.lower() not in ('.png', '.jpg', '.jpeg', '.bmp', '.tif',
+                                          '.tiff', '.mat', '.npy', '.raw', '.bin'):
+            stem = targetPath
+        if kind == 'raw':
+            # A headerless file cannot say its size: its name has to.
+            from core.raw_format import raw_file_name
+            folder, name = os.path.split(stem)
+            if not re.search(r'\d+x\d+', name):
+                name = raw_file_name(name, phase, extension)[:-len(extension)]
+            stem = os.path.join(folder, name)
+        targetPath = stem + extension
 
         try:
-            if sourcePath:
+            if kind == 'copy':
                 if os.path.abspath(targetPath) == os.path.abspath(sourcePath):
                     wx.MessageBox(
                         "That is the file itself.\n\nChoose another name or "
                         "another folder.", "Same File", wx.OK | wx.ICON_WARNING)
                     return
                 shutil.copyfile(sourcePath, targetPath)
+            elif kind == 'tiff32':
+                # A float32 array becomes a 32-bit float TIFF ('F' mode).
+                Image.fromarray(np.asarray(phase, dtype=np.float32)).save(targetPath)
+            elif kind == 'raw':
+                from core.raw_format import save_raw
+                save_raw(targetPath, phase)
             else:
                 page.pil_img.save(targetPath)
         except Exception as error:
@@ -1651,7 +1754,7 @@ class MainFrame(wx.Frame):
                                 "to this data")
                         else:
                             summaryCells[(imageName, metricLabel)] = (
-                                f"{value:.6f}", 'value', "")
+                                format_value(value), 'value', "")
                             
                     except Exception as error:
                         summaryCells[(imageName, metricLabel)] = (
@@ -1927,7 +2030,10 @@ class MainFrame(wx.Frame):
                         self._ensure_column(columnName, width=120)
                         columnIndex = self._get_column_index_by_name(columnName)
                         if columnIndex >= 0:
-                            self.metric_table.SetItem(rowIndex, columnIndex, f"{coefficient:.6f}")
+                            self.metric_table.SetItem(rowIndex, columnIndex, format_value(coefficient))
+                            # Stored too, so the export keeps every digit.
+                            self._record_value(self._metric_values, image_name,
+                                               columnName, float(coefficient))
                     
                     return float(np.mean(meanCoefficients))
                 except Exception as error:
@@ -1960,7 +2066,10 @@ class MainFrame(wx.Frame):
                         self._ensure_column(columnName, width=120)
                         columnIndex = self._get_column_index_by_name(columnName)
                         if columnIndex >= 0:
-                            self.metric_table.SetItem(rowIndex, columnIndex, f"{coefficient:.6f}")
+                            self.metric_table.SetItem(rowIndex, columnIndex, format_value(coefficient))
+                            # Stored too, so the export keeps every digit.
+                            self._record_value(self._metric_values, image_name,
+                                               columnName, float(coefficient))
                     
                     return float(np.mean(coefficients))
                 except Exception as error:
@@ -2223,7 +2332,9 @@ class MainFrame(wx.Frame):
         with wx.FileDialog(
             self, 
             "Select Ground-Truth Image",
-            wildcard="Image files (*.png;*.jpg;*.bmp;*.tif)|*.png;*.jpg;*.bmp;*.tif|MAT files (*.mat)|*.mat",
+            wildcard=("Image files (*.png;*.jpg;*.bmp;*.tif)|*.png;*.jpg;*.bmp;*.tif|"
+                      "MAT files (*.mat)|*.mat|"
+                      "NumPy arrays (*.npy)|*.npy"),
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
         ) as dialog:
             if dialog.ShowModal() == wx.ID_CANCEL:

@@ -4,16 +4,19 @@ import numpy as np
 import os
 from scipy.io import loadmat
 from analysis.module1 import utilitiesRBPV as utRBPV
+from core import raw_format
 
 
 def open_image(parent, notebook):
     """Open images or .mat files and show each one in a new notebook tab."""
     wildcard = (
-        "Supported files (*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.mat)|"
-        "*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.mat|"
+        "Supported files (*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.mat;*.npy;*.raw;*.bin)|"
+        "*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.mat;*.npy;*.raw;*.bin|"
         "Image files (*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff)|"
         "*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff|"
-        "MATLAB files (*.mat)|*.mat"
+        "MATLAB files (*.mat)|*.mat|"
+        "NumPy arrays (*.npy)|*.npy|"
+        "Headerless RAW / BIN (*.raw;*.bin)|*.raw;*.bin"
     )
 
     with wx.FileDialog(parent, "Open Image or .mat File",
@@ -27,7 +30,24 @@ def open_image(parent, notebook):
             extension = os.path.splitext(path)[1].lower()
 
             try:
-                if extension in [".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"]:
+                floatPhase = (read_float_tiff(path)
+                              if extension in (".tif", ".tiff") else None)
+                if floatPhase is not None:
+                    # A 32-bit float TIFF is a phase map in radians, as
+                    # File > Save Image As and ImageJ write it: kept as is.
+                    page = add_phase_tab(notebook, floatPhase, os.path.basename(path))
+                    page.source_path = path
+
+                elif extension == ".npy":
+                    page = open_npy(notebook, path)
+                    page.source_path = path
+
+                elif extension in raw_format.RAW_EXTENSIONS:
+                    page = open_raw(parent, notebook, path)
+                    if page is not None:
+                        page.source_path = path
+
+                elif extension in [".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"]:
                     # 8-bit: 256 phase levels, remapped linearly onto [-pi, pi].
                     grayscale = Image.open(path).convert("L")
                     grayLevels = np.array(grayscale, dtype=float)
@@ -147,3 +167,92 @@ def process_phase_array(notebook, phase_array, filename, field_name):
         "Phase Map Loaded", wx.ICON_INFORMATION)
 
     return page
+
+
+def read_float_tiff(path):
+    """The pixels of a 32/64-bit floating-point TIFF as a 2-D array, else None.
+
+    Any other TIFF (8-bit, 16-bit, RGB) is a picture and returns None, so it
+    goes through the gray-level route like a PNG. A stack gives its first
+    plane."""
+    try:
+        import tifffile
+        values = tifffile.imread(path, key=0)
+    except Exception:
+        try:
+            with Image.open(path) as tiffImage:
+                if tiffImage.mode != 'F':
+                    return None
+                values = np.array(tiffImage)
+        except Exception:
+            return None
+    values = np.asarray(values)
+    if values.ndim != 2 or not np.issubdtype(values.dtype, np.floating):
+        return None
+    return values.astype(float)
+
+
+def add_phase_tab(notebook, phase, title):
+    """A tab measuring `phase` (radians) as it stands, drawn min..max in gray."""
+    phaseMin = float(np.nanmin(phase))
+    phaseMax = float(np.nanmax(phase))
+    displayLevels = np.nan_to_num(phase - phaseMin, nan=0.0)
+    if phaseMax > phaseMin:
+        displayLevels = displayLevels / (phaseMax - phaseMin)
+    displayImage = Image.fromarray((displayLevels * 255).astype(np.uint8))
+
+    page = notebook.add_image_tab(displayImage, title)
+    page.amplitude = None
+    page.phase = phase
+    page.is_mat_complex = False
+    page.is_float_tiff = True
+    return page
+
+
+def load_npy_array(path):
+    """A .npy file as a 2-D array, complex or real.
+
+    Read with allow_pickle=False: a .npy can carry pickled Python objects,
+    and unpickling a file runs code from it. A plain numeric array, which is
+    what a phase map is, never needs that. Singleton axes are dropped, so a
+    (1, H, W) or (H, W, 1) array opens as (H, W)."""
+    array = np.squeeze(np.load(path, allow_pickle=False))
+    if array.ndim != 2:
+        raise ValueError(
+            "a phase map is a 2-D array, but this file holds one of shape %s."
+            % (array.shape,))
+    if not (np.issubdtype(array.dtype, np.number) or array.dtype == bool):
+        raise TypeError("the array holds %s, not numbers." % array.dtype)
+    return array
+
+
+def open_npy(notebook, path):
+    """Open a .npy: complex is a field (its phase is kept), real is radians.
+
+    The same rule as a .mat variable, so a field or a phase map saved from
+    Python opens exactly as it would have from MATLAB."""
+    array = load_npy_array(path)
+    fileName = os.path.basename(path)
+    if np.iscomplexobj(array):
+        return process_complex_field(notebook, array, fileName, "complex")
+    return add_phase_tab(notebook, array.astype(float), fileName)
+
+
+def open_raw(parent, notebook, path):
+    """Open a headerless .raw/.bin, asking its layout first; None if cancelled.
+
+    Floating point is phase in radians, used as it stands; 8-bit is gray
+    levels, mapped onto [-pi, pi] like an 8-bit image file."""
+    from ui.raw_dialog import ask_raw_layout
+    layout = ask_raw_layout(parent, path)
+    if layout is None:
+        return None
+
+    values = raw_format.load_raw(path, **layout)
+    fileName = os.path.basename(path)
+    if layout['dtype_name'] == 'uint8':
+        page = notebook.add_image_tab(Image.fromarray(values.astype(np.uint8)), fileName)
+        page.phase = utRBPV.gray_to_phase(values)
+        page.is_mat_complex = False
+        return page
+    return add_phase_tab(notebook, values, fileName)

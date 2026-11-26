@@ -1,8 +1,12 @@
-# Standardized-QPI-DHM-Evaluation-Protocol
+<p align="center">
+  <img src="My_app/ui/logo.svg" alt="PhaseMark logo" width="260">
+</p>
 
-A Python-based GUI for evaluating the efficiency and validity of phase-reconstruction algorithms in **Digital Holographic Microscopy (DHM)**.  
+# PhaseMark
 
-This repository provides a **standardized protocol** for Quantitative Phase Imaging (QPI) evaluation, structured into four main modules (*cores*) that cover background stability, global phase distortions, ground-truth comparisons, and computational complexity.  
+**PhaseMark** is a Python-based GUI for evaluating the efficiency and validity of phase-reconstruction algorithms in **Digital Holographic Microscopy (DHM)**.  
+
+It implements a **standardized protocol** for Quantitative Phase Imaging (QPI) evaluation, structured into four main modules (*cores*) that cover background stability, global phase distortions, ground-truth comparisons, and computational complexity.  
 
 ---
 
@@ -24,13 +28,12 @@ Focuses on phase flatness in object-free regions of reconstructed phase images. 
 **Metrics:**  
 - Standard deviation (STD)
 - Mean Absolute Deviation (MAD)  
-- Root Mean Square (RMS)  
+- Root Mean Square (RMS), reported with the background mean  
 - Peak-to-Valley (P–V) Value in background  
 - Full Width at Half Maximum (FWHM) of the phase histogram  
-- Spatial frequency content of background  
 - Entropy of background phase map
-- Background phase tilt/curvature residuals (Legendre/Zernike coefficients)  
-
+- Phase jumps (percentage of pixel pairs still crossing a 2π wrap)  
+- Background phase tilt/curvature residuals (Legendre coefficients)  
 
 ---
 
@@ -40,13 +43,15 @@ For samples without large empty regions. Evaluates distortions across the entire
 
 **Metrics:**  
 - Peak-to-Valley (P–V)
-- Global phase gradient 
-- TSM (Total Sharpness Metric)  
-- Phase curvature coefficients (low-order polynomial fitting)  
-- Laplacian energy (Curvature Energy)  
-- Spatial frequency content  
+- Standard deviation (STD) over the whole field
+- PGM (Phase Gradient Metric, mean local gradient)  
+- GPG (Global Phase Gradient, tilt of the least-squares plane)  
+- TSM (Thresholding and Intensity Summation Metric)  
+- Laplacian energy (LE)  
+- Spatial frequency (SF)  
 - Entropy of phase map  
-- Sharpness/Contrast metrics  
+- GSM (Generalized Sharpness Metric)  
+- FWHM of the whole-field histogram  
 
 ---
 
@@ -69,15 +74,28 @@ Estimates computational cost of each algorithm:
 
 ---
 
-## Test Holograms  
+## Samples  
 
-The repository includes a diverse set of test holograms to ensure robust evaluation:  
-Included sample holograms correspond to calibration patterns (USAF and Star Target) and a biological sample. File name for each hologram indicates the parameters used to record it:
+Bundled samples are available from the **Samples** menu:
 
-**T_Usaf_20x_632_3.75.bmp** — USAF pattern, 20x objective, 632 nm wavelength, 3.75 µm pixel size.
-**N_Star_20x_532_5.86_-4cm.tiff** — Star Target pattern, 20x objective, 532 nm wavelength, 5.86 µm pixel size, -4 cm defocus.
-**T_Star_10x_632_3.75.bmp** — Star Target pattern, 10x objective, 632 nm wavelength, 3.75 µm pixel size.
-**T_Probiotics_20x_632_3.75.bmp** — Biological sample (probiotics), 20x objective, 632 nm wavelength, 3.75 µm pixel size.
+```
+Samples
+├── Holograms
+│   ├── Telecentric
+│   └── Non-telecentric
+└── Reconstruction Samples
+```
+
+### Holograms
+
+The repository includes a diverse set of test holograms to ensure robust evaluation, available from **Samples → Holograms**. They are **holograms, not phase maps**: they are meant to be reconstructed and compensated with the algorithm under test, and the resulting phase map is then evaluated in PhaseMark.  
+Included sample holograms correspond to calibration patterns (USAF and Star Target) and biological samples. File name for each hologram indicates the parameters used to record it:
+
+**Telecentric/T_Usaf_20x_632_3.75.bmp** — USAF pattern, 20x objective, 632 nm wavelength, 3.75 µm pixel size.<br>
+**Telecentric/T_Star_10x_632_3.75.bmp** — Star Target pattern, 10x objective, 632 nm wavelength, 3.75 µm pixel size.<br>
+**Telecentric/T_Probiotics_20x_632_3.75.bmp** — Biological sample (probiotics), 20x objective, 632 nm wavelength, 3.75 µm pixel size.<br>
+**No Telecentric/N_Star_20x_532_5.86_-4cm.tiff** — Star Target pattern, 20x objective, 532 nm wavelength, 5.86 µm pixel size, -4 cm defocus.<br>
+**No Telecentric/NredBlood_40x_632_4.65_30mm.tiff** — Biological sample (red blood cells), 40x objective, 632 nm wavelength, 4.65 µm pixel size, 30 mm defocus.<br>
 
 Naming convention: [Prefix]_[Sample]_[Objective]_[Wavelength in nm]_[Pixel size in µm]_[Additional parameters].[extension]
 
@@ -90,96 +108,93 @@ Where:
 **Pixel size:** in micrometers<br>
 Additional parameters (optional): such as defocus distance (-4cm).<br>
 
+### Reconstruction Samples
+
+**Samples → Reconstruction Samples** opens **compensated phase maps**, ready to be measured with every module. The file name gives the object and the compensation method, so two methods applied to the same object can be compared directly:
+
+**Drosophila_PCA.bmp** / **Drosophila_VortexLeg.bmp** — Drosophila, compensated with PCA and with VortexLeg.<br>
+**starTarget_PCA.bmp** / **starTarget_VortexLeg.bmp** — Star Target, compensated with PCA and with VortexLeg.<br>
+
+The submenu lists every file in `My_app/Samples compensated phase/`, so a phase map added to that folder appears in it automatically.
+
 ---
 ## Repository structure
  
 ```
-MY_APP/
+My_app/
 ├── analysis/
 │   ├── module1/
 │   │   ├── residual_background.py
+│   │   ├── segmentation.py
 │   │   └── utilitiesRBPV.py
 │   ├── module2/
 │   │   └── global_phase.py
 │   ├── module3/
 │   │   └── ground_truth_comparison.py
+│   ├── cache.py
+│   ├── catalog.py
 │   └── __init__.py
 │
-├── complexity_algorithm/
-│   ├── anidado_1.py
-│   ├── anidado_2.py
-│   ├── anidado.py
-│   ├── pyDHM_methods.py
-│   ├── SHPC.py
-│   ├── test_functions.py
-│   ├── test.py
-│   ├── Gray_images/
-│   │   ├── 128x128/
-│   │   ├── 256x256/
-│   │   ├── 512x512/
-│   │   ├── 640x480/
-│   │   ├── 800x600/
-│   │   ├── 1024x768/
-│   │   ├── 1600x1200/
-│   │   ├── 1920x1440/
-│   │   ├── 2048x2048/
-│   │   ├── 2560x1920/
-│   │   ├── 3840x2880/
-│   │   └── 4096x4096/
-│   │       └── (img1.png, img2.png, img3.png per resolution)
-│   │
-│   ├── Hologram_stack/
-│   │   ├── 128x128/
-│   │   ├── 256x256/
-│   │   ├── 512x512/
-│   │   ├── 640x480/
-│   │   ├── 800x600/
-│   │   ├── 1024x768/
-│   │   ├── 1600x1200/
-│   │   ├── 1920x1440/
-│   │   ├── 2048x2048/
-│   │   ├── 2560x1920/
-│   │   ├── 3840x2880/
-│   │   └── 4096x4096/
-│   │       └── (hologram_01.png ... hologram_10.png per resolution)
-│   │
+├── complexity_algorithm/          # Module IV: computational complexity tool
+│   ├── Main.py
+│   ├── complexity_fit.py
+│   ├── perf_protocol.py
+│   ├── visualizer_v2.py
+│   ├── setup.py / setup_windows.py
+│   ├── test_complexity_fit.py
+│   ├── Algorythm_results_windows/
+│   ├── Gray_images/               # test images, 128x128 ... 4096x4096
+│   ├── Hologram_stack/            # test holograms, 128x128 ... 4096x4096
 │   ├── Test_algorithm/
-│   │   ├── pyDHM_methods.py
-│   │   └── SHPC.py
-│   │
 │   ├── Test_files/
-│   │   ├── SHPC_Perfomance.txt
-│   │   ├── test_functions.py
-│   │   └── Vortex_Performance.txt
-│   │
-│   └── User_manual/
-│       └── User_Manual.docx
+│   ├── User_manual/
+│   │   └── User_Manual.docx
+│   └── README.md
 │
 ├── core/
-│   └── file_manager.py
+│   ├── file_manager.py
+│   └── imagej_bridge.py
 │
 ├── menus/
 │   ├── analysis_menu.py
-│   ├── edit_menu.py
 │   ├── file_menu.py
 │   ├── help_menu.py
 │   └── samples_menu.py
 │
 ├── Samples Hologram/
-│   ├── N_Star_20x_532_5.86_-4cm.tiff
-│   ├── T_Probiotics_20x_632_3.75.bmp
-│   ├── T_Star_10x_632_3.75.bmp
-│   └── T_Usaf_20x_632_3.75.bmp
+│   ├── Telecentric/
+│   │   ├── T_Probiotics_20x_632_3.75.bmp
+│   │   ├── T_Star_10x_632_3.75.bmp
+│   │   └── T_Usaf_20x_632_3.75.bmp
+│   └── No Telecentric/
+│       ├── N_Star_20x_532_5.86_-4cm.tiff
+│       └── NredBlood_40x_632_4.65_30mm.tiff
+│
+├── Samples compensated phase/     # listed under Samples → Reconstruction Samples
+│   ├── Drosophila_PCA.bmp
+│   ├── Drosophila_VortexLeg.bmp
+│   ├── starTarget_PCA.bmp
+│   └── starTarget_VortexLeg.bmp
 │
 ├── ui/
+│   ├── icons/                     # toolbar icons (SVG)
+│   ├── hidpi.py
+│   ├── icons.py
 │   ├── image_selection_dialog.py
+│   ├── legendre_viewer.py
 │   ├── main_frame.py
-│   └── metric_selection_dialog.py
+│   ├── metric_selection_dialog.py
+│   ├── results_dialog.py
+│   ├── threshold_dialog.py
+│   ├── tsm_dialog.py
+│   └── zone_selector.py
 │
-├── app.py              # ⭐ Main entry point — run this file to ├── launch the application
+├── User_manual/
+│   └── User_Manual.docx
+│
+├── app.py              # ⭐ Main entry point — run this file to launch PhaseMark
+├── app.spec            # PyInstaller build file (produces PhaseMark.exe)
 ├── detached_notebook.py
-├── launcher.py
-├── README.md
 └── requirements.txt
 ```
 ---
@@ -201,15 +216,19 @@ MY_APP/
 | openpyxl | ≥ 3.1.0 |
 | scikit-learn | ≥ 1.3 | 
 | opencv-python | ≥ 4.8 | 
+| pyimagej | ≥ 1.7.0 (optional, for ImageJ integration) |
+| JPype1 | ≥ 1.3.0 (optional, for ImageJ integration) |
+
+The ImageJ integration also needs a Java runtime. Everything else works without it.
 
 With Python 3.13.9 or higher already installed, install all dependencies using the provided requirements.txt file:
 ```bash
-pip install -r requirements.txt
+pip install -r My_app/requirements.txt
 ```
 **Note**: As an alternative method (without using the file), dependencies can also be installed manually by running:
 
 ```bash
-pip install wxPython numpy pandas matplotlib pillow scikit-image scipy openpyxl scikit-learn opencv-python
+pip install wxPython numpy pandas matplotlib pillow scikit-image scipy openpyxl scikit-learn opencv-python pyimagej JPype1
 ```
  
 ---
@@ -217,17 +236,21 @@ pip install wxPython numpy pandas matplotlib pillow scikit-image scipy openpyxl 
 ## Quick start — GUI
  
 ```bash
-python app.py
+python My_app/app.py
 ```
 ## How the Application Works
 
 ### 1. Launching the Application
-After running `app.py`, the main window opens, giving access to the workspace and the menu bar.
+After running `app.py`, the PhaseMark main window opens, giving access to the workspace, the toolbar and the menu bar.
+
+The **toolbar** puts the most used actions one click away: Open, Save, ImageJ, the four modules (Background, Global, Ground truth, Complexity), Clear and Help. It can be hidden and shown again with **View → Toolbar**, the arrow at its right end, or **Ctrl+T**.
 
 ### 2. Loading an Image
-1. Go to **File → Open**.
-2. Select the phase map/image (.mat,.jpeg,.png,.bmp) to analyze.
+1. Go to **File → Open** (Ctrl+O).
+2. Select the phase map/image (.mat, .npy, .raw, .bin, .png, .jpg, .bmp, .tif) to analyze. A real `.mat` or `.npy` array, a float `.raw`/`.bin`, or a 32-bit float TIFF is used as the phase in radians; a complex `.mat` or `.npy` array is a field whose phase is kept; an 8-bit image is mapped from gray levels onto [−π, π]. A `.raw`/`.bin` has no header, so a dialog asks for its width, height, data type and byte order, prefilled from a name like `fase_640x480_float32.raw`.
 3. The image is displayed in the main workspace.
+
+PhaseMark expects a **compensated phase map**, not a hologram. While the active tab holds one of the bundled holograms, Modules I to III are disabled.
 
 ### 3. Analysis Menu
 The **Analysis** menu contains four modules:
@@ -241,22 +264,22 @@ The **Analysis** menu contains four modules:
 
 ### Module 1 – Residual Background Phase Variance
 
-When this module is selected, a metric-selection window appears, listing all available metrics (STD, MAD, RMS, PV, FWHM, Entropy, Legendre — each for Unwrapped Background, Background, and Background Zones). The user can select one or several metrics and click **Apply**.
+When this module is selected, a metric-selection window appears, listing all available metrics (STD, MAD, RMS, PV, FWHM, Entropy, Phase jumps, Legendre — each for Unwrapped Background, Background, and Background Zones). The user can select one or several metrics and click **Apply**.
 
 Each metric offers **3 calculation options**:
 
-**Option 1 — Calculate with phase unwrapping**
-- A warning is shown first, since unwrapping may jeopardize phase measurements.
-- If the user chooses to continue, a **segmentation step** is required:
+**Option 1 — Unwrapped Background**
+- The phase is unwrapped before measuring. If this is the only metric selected, a warning is shown first, since unwrapping may jeopardize phase measurements.
+- A **segmentation step** follows:
   - The user adjusts the threshold to separate sample from background.
   - Once satisfied, the user clicks **OK** and the metric is calculated.
 
-**Option 2 — Calculate whit or without phase unwrapping**
+**Option 2 — Background (wrapped phase)**
 - Skips the unwrapping step and warning.
 - Starts directly at the threshold/segmentation step; the rest of the process is identical to Option 1.
 
 **Option 3 — Zone-based analysis**
-1. The same unwrapping warning is shown (with the option to unwrap or not).
+1. The user is asked whether to unwrap the phase (once per run).
 2. The user specifies the number of zones to analyze.
 3. The image is displayed, and the user draws a bounding box for each zone of interest.
 4. The metric is calculated per zone, along with the overall average across all zones.
@@ -266,35 +289,56 @@ Each metric offers **3 calculation options**:
 ### Module 2 – Global Phase
 
 For each available metric, the user chooses between:
-- Calculate **without** unwrapping the phase, or
-- Calculate **with** unwrapping the phase.
+- Calculate **without** unwrapping the phase (Global), or
+- Calculate **with** unwrapping the phase (Unwrapped).
 
-Once an option is selected, the metric is calculated automatically for the entire sample — no additional steps (segmentation or zone selection) are required.
+Once an option is selected, the metric is calculated for the entire field — no segmentation or zone selection is required. The only exception is **TSM**, which opens a dialog where the user sets the binarization threshold and the sample side.
 
 ---
 
 ### Module 3 – Ground Truth Comparison
 
-1. The module first requires a **reference image**. If none is loaded, the user is prompted to load one.
+1. The module first requires a **reference image** of the same size. If none is loaded, the user is prompted to load one.
 2. The user selects the desired metrics.
-3. As in Module 2, each metric can be calculated **with or without** phase unwrapping.
-4. The selected metrics are then calculated by comparing the loaded image against the reference.
+3. The selected metrics are calculated by comparing the loaded image against the reference. Neither image is unwrapped.
 
 ---
 
 ### Results Table and Export
 
-As metrics are calculated (from any module), their values are appended to a results table shown at the bottom of the workspace, labeled with the metric name.
+As metrics are calculated (from any module), their values are appended to a results table shown at the bottom of the workspace, labeled with the metric name. When a run finishes, a summary window shows the same results with one row per metric.
 
 Results can be exported in two ways:
-- **Right-click** on the table → export option, or
-- **File → Save**, choosing between **.xlsx** or **.csv** format.
+- **Right-click** on the table → export to **.xlsx** or **.csv**, or
+- **File → Save Results** (Ctrl+S), which exports every table to Excel.
+
+A copy of the image in the current tab can be saved with **File → Save Image As** (Ctrl+Shift+S). A tab holding a phase can also export it, in radians, as a 32-bit TIFF or as a headerless `.raw`/`.bin` (float32, little-endian); the size is written into the file name, e.g. `fase_640x480_float32.raw`.
+
+---
+
+### ImageJ Integration
+
+**ImageJ → Send current image to ImageJ** (or the ImageJ toolbar button) opens ImageJ (Fiji) with the **phase** of the active tab as a **32-bit float image in radians** (for a `.mat` file, its true phase; for a hologram, which holds no phase, its 8-bit picture).
+
+Edits made in ImageJ come back into PhaseMark as a tab named `<image>_ImageJ`, refreshed after each change. That tab keeps two things:
+- **What it shows:** the image as drawn in ImageJ, with LUT, contrast and overlays.
+- **What it measures:** the 32-bit phase values, in radians. LUTs, Brightness/Contrast (without *Apply*) and overlays do not affect the metrics.
+
+If the image is converted away from 32-bit in ImageJ, PhaseMark warns that it no longer holds the phase.
+
+**File → Save Image As** on an ImageJ tab saves either the image as shown (PNG/TIFF/BMP) or the phase in radians as a 32-bit TIFF or `.raw`/`.bin`, which **File → Open** reads back as phase.
 
 ---
 
 ### Computational complexity Module
 
-This module evaluates the **computational complexity** of phase-compensation algorithms, including execution time, number of operations, and related performance metrics.
+This module evaluates the **computational complexity** of phase-compensation algorithms, including execution time, number of operations, and related performance metrics. The profiling relies on the Linux `perf` utility, so measurements require Linux or WSL2.
+
+---
+
+### Help
+
+**Help → View Help** (F1) explains every metric, how to read it, and the keyboard shortcuts.
 
 ## References
 

@@ -5,7 +5,7 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('Samples Hologram', 'Samples Hologram'), ('Samples compensated phase', 'Samples compensated phase'), ('ui/icons', 'ui/icons'), ('ui/logo.svg', 'ui'), ('ui/logo_icon.svg', 'ui')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='app',
+    name='PhaseMark',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -35,4 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='ui/PhaseMark.ico',
 )

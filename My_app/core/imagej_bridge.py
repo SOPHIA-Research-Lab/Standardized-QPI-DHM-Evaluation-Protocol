@@ -41,6 +41,8 @@ ImagePlus = None
 
 _active_images = {}
 _last_hash = {}
+#: Whether each title was sent as 32-bit phase or as an 8-bit picture.
+_sent_as_phase = {}
 
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".my_app_fiji_config.json")
 
@@ -155,6 +157,7 @@ def _close_all_imagej_images():
             imagePlus.close()
     _active_images.clear()
     _last_hash.clear()
+    _sent_as_phase.clear()
 
 
 def _bring_to_front(window):
@@ -228,27 +231,14 @@ def show_imagej_gui(parent_window=None):
     _bring_to_front(_ij_frame)
 
 
-def pil_to_imageplus(pil_img: Image.Image, title="FromApp", parent_window=None):
-
-    _ensure_imagej_started(parent_window)
-
-
-    pixelArray = np.array(pil_img.convert("L"), dtype=np.uint8)
-    height, width = pixelArray.shape
-
-    flatPixels = pixelArray.flatten().astype(np.int8)
-    javaByteArray = jpype.JArray(jpype.JByte)(flatPixels.tolist())
-
+def _show_or_replace(title, processor):
+    """Show `processor` in ImageJ under `title`, reusing that window if open."""
     existingImage = _active_images.get(title)
     if existingImage is not None and WindowManager.getImage(existingImage.getID()) is not None:
-        existingImage.getProcessor().setPixels(javaByteArray)
+        existingImage.setProcessor(processor)
         existingImage.updateAndDraw()
         _bring_to_front(existingImage.getWindow())
         return existingImage
-
-    ByteProcessor = jimport('ij.process.ByteProcessor')
-    processor = ByteProcessor(width, height)
-    processor.setPixels(javaByteArray)
 
     imagePlus = ImagePlus(title, processor)
     imagePlus.show()
@@ -261,8 +251,49 @@ def pil_to_imageplus(pil_img: Image.Image, title="FromApp", parent_window=None):
     return imagePlus
 
 
+def phase_to_imageplus(phase, title="FromApp", parent_window=None):
+    """Send a phase map to ImageJ as a 32-bit float image, values in radians.
+
+    ImageJ draws it in gray over its own min..max, so it looks as it always
+    did, but the pixel values under the cursor are the phase itself and
+    filters and arithmetic run on it in float. Brightness/Contrast and LUTs
+    change only how it is drawn, unless Apply is pressed."""
+    _ensure_imagej_started(parent_window)
+
+    phaseArray = np.ascontiguousarray(phase, dtype=np.float32)
+    height, width = phaseArray.shape
+
+    FloatProcessor = jimport('ij.process.FloatProcessor')
+    processor = FloatProcessor(width, height,
+                               jpype.JArray(jpype.JFloat)(phaseArray.ravel()))
+    processor.resetMinAndMax()
+
+    imagePlus = _show_or_replace(title, processor)
+    _sent_as_phase[title] = True
+    return imagePlus
+
+
+def pil_to_imageplus(pil_img: Image.Image, title="FromApp", parent_window=None):
+    """Send an 8-bit picture: for a tab that holds no phase (a hologram)."""
+    _ensure_imagej_started(parent_window)
+
+    pixelArray = np.array(pil_img.convert("L"), dtype=np.uint8)
+    height, width = pixelArray.shape
+
+    flatPixels = pixelArray.flatten().astype(np.int8)
+    javaByteArray = jpype.JArray(jpype.JByte)(flatPixels.tolist())
+
+    ByteProcessor = jimport('ij.process.ByteProcessor')
+    processor = ByteProcessor(width, height)
+    processor.setPixels(javaByteArray)
+
+    imagePlus = _show_or_replace(title, processor)
+    _sent_as_phase[title] = False
+    return imagePlus
+
+
 def _imageplus_to_pil(imp):
-    """Converts any ImagePlus (grayscale, LUT, RGB, overlays, scale bars, etc.) to PIL."""
+    """What the image LOOKS like in ImageJ: LUT, contrast and overlays included."""
 
     ImageIO = jimport('javax.imageio.ImageIO')
     ByteArrayOutputStream = jimport('java.io.ByteArrayOutputStream')
@@ -277,8 +308,53 @@ def _imageplus_to_pil(imp):
     return Image.open(io.BytesIO(pngBytes)).convert("RGB")
 
 
+def _imageplus_to_phase(imp):
+    """The pixel VALUES of a 32-bit image as a float array, or None.
+
+    Only a 32-bit image still holds phase in radians: one converted to 8-bit,
+    16-bit or RGB in ImageJ holds display levels, and reading those as phase
+    would be wrong without saying so. A stack gives its current slice."""
+    if imp.getBitDepth() != 32:
+        return None
+    processor = imp.getProcessor()
+    width, height = processor.getWidth(), processor.getHeight()
+    values = np.array(processor.getPixels(), dtype=np.float32)
+    return values.reshape(height, width).astype(float)
+
+
+def _read(title, imagePlus):
+    """One reading of an ImageJ image: what it looks like and what it holds."""
+    pilImage = _imageplus_to_pil(imagePlus)
+    phase = _imageplus_to_phase(imagePlus)
+    # Either side changing is news: new data, or only a new look.
+    currentHash = hash((pilImage.tobytes(),
+                        None if phase is None else phase.tobytes()))
+    return {
+        'title': title,
+        'image': pilImage,
+        'phase': phase,
+        # Sent as phase but no longer 32-bit: converted inside ImageJ.
+        'phase_lost': phase is None and _sent_as_phase.get(title, False),
+        'hash': currentHash,
+    }
+
+
+def snapshot(title):
+    """Read the ImageJ image sent under `title` now, and count it as seen."""
+    imagePlus = _active_images.get(title)
+    if imagePlus is None:
+        return None
+    reading = _read(title, imagePlus)
+    _last_hash[title] = reading['hash']
+    return reading
+
+
 def check_for_imagej_updates():
-    """Checks all tracked ImageJ images for ANY change (pixels, color, LUT, overlays, etc.)."""
+    """Every tracked ImageJ image that changed, in its pixels or in its look.
+
+    Each change is a dict: 'title', 'image' (the picture as drawn in ImageJ),
+    'phase' (the 32-bit values in radians, or None) and 'phase_lost' (True
+    when it was sent as phase and has since been converted away from 32-bit)."""
     if not _ij_initialized:
         return []
 
@@ -291,12 +367,10 @@ def check_for_imagej_updates():
             continue
 
         try:
-            pilImage = _imageplus_to_pil(imagePlus)
-            currentHash = hash(pilImage.tobytes())
-
-            if _last_hash.get(title) != currentHash:
-                _last_hash[title] = currentHash
-                changes.append((title, pilImage))
+            reading = _read(title, imagePlus)
+            if _last_hash.get(title) != reading['hash']:
+                _last_hash[title] = reading['hash']
+                changes.append(reading)
         except Exception as error:
             print(f"Error checking '{title}': {error}")
             continue
@@ -304,5 +378,6 @@ def check_for_imagej_updates():
     for title in titlesToRemove:
         del _active_images[title]
         _last_hash.pop(title, None)
+        _sent_as_phase.pop(title, None)
 
     return changes

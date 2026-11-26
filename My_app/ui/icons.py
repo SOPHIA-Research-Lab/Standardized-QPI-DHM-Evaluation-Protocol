@@ -62,3 +62,33 @@ def icon(name, size=24, window=None):
 def names():
     """Every icon name available in ui/icons/."""
     return sorted(fileName[:-4] for fileName in os.listdir(_DIR) if fileName.endswith('.svg'))
+
+
+#: The PhaseMark logo, one level up from the toolbar icons.
+_LOGO_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def logo(height, window=None):
+    """The full PhaseMark logo (ui/logo.svg) as a wx.Bitmap, `height` logical px tall."""
+    scaleFactor = hidpi.scale(window)
+    cacheKey = ('__logo__', height, scaleFactor)
+    if cacheKey in _CACHE:
+        return _CACHE[cacheKey]
+
+    svgImage = wx.svg.SVGimage.CreateFromFile(os.path.join(_LOGO_DIR, 'logo.svg'))
+    pixelHeight = max(1, int(round(height * scaleFactor)))
+    pixelWidth = max(1, int(round(pixelHeight * svgImage.width / svgImage.height)))
+    logoBitmap = svgImage.ConvertToScaledBitmap(wx.Size(pixelWidth, pixelHeight))
+    if scaleFactor != 1.0:
+        logoBitmap.SetScaleFactor(scaleFactor)
+    _CACHE[cacheKey] = logoBitmap
+    return logoBitmap
+
+
+def app_icons():
+    """The square logo (ui/logo_icon.svg) at every size Windows asks for."""
+    svgImage = wx.svg.SVGimage.CreateFromFile(os.path.join(_LOGO_DIR, 'logo_icon.svg'))
+    bundle = wx.IconBundle()
+    for side in (16, 20, 24, 32, 40, 48, 64, 128, 256):
+        bundle.AddIcon(wx.Icon(svgImage.ConvertToScaledBitmap(wx.Size(side, side))))
+    return bundle

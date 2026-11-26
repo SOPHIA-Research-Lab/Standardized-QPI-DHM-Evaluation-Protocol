@@ -116,8 +116,10 @@ class ImageNotebook(wx.aui.AuiNotebook):
         panelSizer.Add(bitmapCtrl, 1, wx.EXPAND | wx.ALL, 5)
         panel.SetSizer(panelSizer)
 
-        panel.Bind(wx.EVT_SIZE, lambda evt: self._update_bitmap(bitmapCtrl, pil_img, panel.scale_factor))
-        wx.CallAfter(self._update_bitmap, bitmapCtrl, pil_img, panel.scale_factor)
+        # panel.pil_img, not pil_img: a tab linked to ImageJ swaps its picture,
+        # and a resize must redraw the current one, not the first.
+        panel.Bind(wx.EVT_SIZE, lambda evt: self._update_bitmap(bitmapCtrl, panel.pil_img, panel.scale_factor))
+        wx.CallAfter(lambda: self._update_bitmap(bitmapCtrl, panel.pil_img, panel.scale_factor))
 
         panel.Bind(wx.EVT_MOUSEWHEEL, self.on_zoom)
         bitmapCtrl.Bind(wx.EVT_MOUSEWHEEL, self.on_zoom)
@@ -180,7 +182,8 @@ class ImageNotebook(wx.aui.AuiNotebook):
         """Extract additional data from panel."""
         preserved = {}
         attributesToPreserve = ['is_mat_complex', 'amplitude', 'phase',
-                                'complex_field_name', 'is_sample']
+                                'complex_field_name', 'is_sample',
+                                'source_path', 'from_imagej', 'is_float_tiff']
         for attributeName in attributesToPreserve:
             if hasattr(panel, attributeName):
                 preserved[attributeName] = getattr(panel, attributeName)

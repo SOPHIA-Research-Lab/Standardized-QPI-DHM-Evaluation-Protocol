@@ -15,6 +15,10 @@ def _as_phase(variable):
 def load_ground_truth(path):
     """Load a ground-truth phase map from a .mat file or an image."""
     try:
+        if path.lower().endswith('.npy'):
+            # Same reading as File > Open: complex is a field, real is radians.
+            from core.file_manager import load_npy_array
+            return _as_phase(load_npy_array(path)).astype(float)
         if path.endswith('.mat'):
             import scipy.io as sio
             matData = sio.loadmat(path)
